@@ -140,31 +140,57 @@ def detect_markers_in_linearized(
     for m in candidates:
         print(f"  {m}")
 
-    # Find consecutive pairs: (n, n+1)
-    # Strategy: Find all pairs, then extract unique markers
-    validated_set = set()
+    # Find consecutive number sequences
+    # Strategy: Sort by NUMBER (not Y), find consecutive runs
+    # Then verify Y coordinates are also increasing
 
-    for i in range(len(candidates) - 1):
-        current = candidates[i]
-        next_marker = candidates[i + 1]
+    # Sort by problem number
+    by_number = sorted(candidates, key=lambda m: m.number)
 
-        if next_marker.number == current.number + 1:
-            # Consecutive pair found!
-            validated_set.add(current.number)
-            validated_set.add(next_marker.number)
-            print(f"  ✅ Pair found: {current.number} → {next_marker.number}")
-
-    # If no pairs found but we have candidates, validate the single marker
-    if not validated_set and len(candidates) == 1:
-        validated_set.add(candidates[0].number)
-        print(f"  ✅ Single marker: {candidates[0].number}")
-
-    # Build final list with validated markers only
-    validated = [m for m in candidates if m.number in validated_set]
-
-    print(f"\n✅ Validated {len(validated)} problem markers:")
-    for m in validated:
+    print(f"\nSorted by number:")
+    for m in by_number:
         print(f"  {m}")
+
+    # Find consecutive sequences
+    sequences = []
+    current_seq = []
+
+    for i, marker in enumerate(by_number):
+        if not current_seq:
+            current_seq.append(marker)
+        else:
+            # Check if consecutive
+            if marker.number == current_seq[-1].number + 1:
+                # Also check Y coordinate is increasing
+                if marker.y_position > current_seq[-1].y_position:
+                    current_seq.append(marker)
+                    print(f"  ✅ Consecutive: {current_seq[-2].number} → {marker.number}")
+                else:
+                    print(f"  ⚠️  Skip {current_seq[-1].number} → {marker.number} (Y not increasing)")
+                    # Start new sequence
+                    if len(current_seq) >= 2:
+                        sequences.append(current_seq)
+                    current_seq = [marker]
+            else:
+                # Not consecutive, save current sequence
+                if len(current_seq) >= 2:
+                    sequences.append(current_seq)
+                    print(f"  📦 Sequence saved: {[m.number for m in current_seq]}")
+                current_seq = [marker]
+
+    # Don't forget the last sequence
+    if len(current_seq) >= 2:
+        sequences.append(current_seq)
+        print(f"  📦 Final sequence: {[m.number for m in current_seq]}")
+
+    # Pick the longest sequence
+    if sequences:
+        longest = max(sequences, key=len)
+        validated = longest
+        print(f"\n✅ Selected longest sequence: {[m.number for m in validated]}")
+    else:
+        validated = []
+        print(f"\n❌ No valid sequences found")
 
     return validated
 
