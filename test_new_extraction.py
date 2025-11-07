@@ -27,7 +27,6 @@ from core.problem_boundary import (
     SOCIAL_STUDIES_GROUND_TRUTH,
     SCIENCE_GROUND_TRUTH
 )
-from core.ocr_engine import OcrEngine
 from core.layout_detector import LayoutDetector
 
 
@@ -69,8 +68,7 @@ def test_sample(sample_name: str, pdf_path: Path, ground_truth: list):
 
     # Step 4: Detect problem markers
     print("\nStep 4: Detecting problem markers...")
-    ocr_engine = OcrEngine()
-    markers = detect_markers_in_linearized(linearized, ocr_engine)
+    markers = detect_markers_in_linearized(linearized)
 
     if not markers:
         print("❌ No markers detected!")

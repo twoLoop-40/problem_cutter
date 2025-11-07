@@ -20,7 +20,7 @@ import numpy as np
 from PIL import Image
 
 from .column_linearizer import LinearizedContent
-from .ocr_engine import detect_problem_markers, parse_problem_number
+from .ocr_engine import parse_problem_number, run_tesseract_ocr
 
 
 @dataclass
@@ -94,35 +94,33 @@ SCIENCE_SHARED_PASSAGE_GROUND_TRUTH = [
 
 def detect_markers_in_linearized(
     linearized: LinearizedContent,
-    ocr_engine
+    lang: str = "kor+eng"
 ) -> List[ProblemMarker]:
     """Detect problem markers in linearized content using OCR
 
     Args:
         linearized: Linearized content
-        ocr_engine: OCR engine instance
+        lang: OCR language (default "kor+eng")
 
     Returns:
         List of detected problem markers (sorted by y_position)
     """
     # Run OCR on linearized image
-    ocr_results = ocr_engine.detect_text(linearized.linearized_image)
+    ocr_results = run_tesseract_ocr(linearized.linearized_image, lang)
 
     # Extract problem markers
     markers = []
     for result in ocr_results:
         # Parse problem number from text
-        text = result.get("text", "")
+        text = result.text
         number = parse_problem_number(text)
 
         if number is not None:
             # Get Y position (use top of bounding box)
-            bbox = result.get("bbox")
-            if bbox:
-                y_pos = bbox.get("top", bbox.get("y", 0))
-                conf = result.get("confidence", 0.0)
+            y_pos = result.bbox.top_left.y
+            conf = result.confidence
 
-                markers.append(ProblemMarker(number, y_pos, conf))
+            markers.append(ProblemMarker(number, y_pos, conf))
 
     # Sort by y_position (top to bottom)
     markers.sort(key=lambda m: m.y_position)
@@ -145,22 +143,22 @@ def detect_markers_in_linearized(
 
 def detect_shared_passages(
     linearized: LinearizedContent,
-    ocr_engine
+    lang: str = "kor+eng"
 ) -> List[SharedPassage]:
     """Detect shared passages like [8_9] in linearized content
 
     Args:
         linearized: Linearized content
-        ocr_engine: OCR engine instance
+        lang: OCR language (default "kor+eng")
 
     Returns:
         List of detected shared passages
     """
-    ocr_results = ocr_engine.detect_text(linearized.linearized_image)
+    ocr_results = run_tesseract_ocr(linearized.linearized_image, lang)
 
     passages = []
     for result in ocr_results:
-        text = result.get("text", "").strip()
+        text = result.text.strip()
 
         # Look for patterns like [8_9], [1-2], etc.
         import re
@@ -168,22 +166,18 @@ def detect_shared_passages(
         match = re.match(r'^\[(\d+)_(\d+)\]$', text)
         if match:
             num1, num2 = int(match.group(1)), int(match.group(2))
-            bbox = result.get("bbox")
-            if bbox:
-                y_pos = bbox.get("top", bbox.get("y", 0))
-                conf = result.get("confidence", 0.0)
-                passages.append(SharedPassage([num1, num2], y_pos, conf))
-                continue
+            y_pos = result.bbox.top_left.y
+            conf = result.confidence
+            passages.append(SharedPassage([num1, num2], y_pos, conf))
+            continue
 
         # Pattern 2: [8-9]
         match = re.match(r'^\[(\d+)-(\d+)\]$', text)
         if match:
             num1, num2 = int(match.group(1)), int(match.group(2))
-            bbox = result.get("bbox")
-            if bbox:
-                y_pos = bbox.get("top", bbox.get("y", 0))
-                conf = result.get("confidence", 0.0)
-                passages.append(SharedPassage([num1, num2], y_pos, conf))
+            y_pos = result.bbox.top_left.y
+            conf = result.confidence
+            passages.append(SharedPassage([num1, num2], y_pos, conf))
 
     if passages:
         print(f"\nDetected {len(passages)} shared passages:")
