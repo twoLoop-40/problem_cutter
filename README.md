@@ -24,6 +24,7 @@ problem_cutter/
 │   └── Workflow.idr          # ✅ 전체 워크플로우
 │
 ├── core/                      # Python 구현 (예정)
+├── AgentTools/                # 에이전트 친화적 Python 래퍼
 ├── tests/                     # 테스트 (예정)
 ├── samples/                   # 샘플 PDF
 ├── output/                    # 결과물
@@ -43,6 +44,41 @@ problem_cutter/
 - ⏳ OCR 통합 (Mathpix 또는 Tesseract)
 - ⏳ 테스트 작성
 - ⏳ CLI 인터페이스
+
+## 🤖 AgentTools 소개
+
+에이전트 프레임워크(예: Claude Code, LangGraph 등)에서 쉽게 재사용할 수 있도록
+`AgentTools/` 패키지를 제공합니다. 각 단계별 핵심 기능을 표준 `ToolResult`
+형식으로 감싸며, 성공 여부와 진단 정보를 함께 반환합니다.
+
+```python
+from AgentTools import pdf, layout, extraction
+from core.problem_extractor import BoundaryStrategy
+
+pdf_info = pdf.summarize_pdf("samples/통합과학_1_샘플.pdf")
+if not pdf_info.success:
+    raise RuntimeError(pdf_info.message)
+
+images_result = pdf.load_pdf_images("samples/통합과학_1_샘플.pdf", dpi=200, limit_pages=1)
+page_image = images_result.data["images"][0]
+
+layout_result = layout.detect_page_layout(page_image)
+
+boundaries = extraction.find_problem_boundaries(
+    BoundaryStrategy.COMBINED,
+    layout_result.data["layout"],
+    ocr_results=[],  # OCR 결과 연결 시 교체
+    all_boxes=[],
+)
+```
+
+핵심 모듈 요약
+
+- `AgentTools.pdf`: PDF 요약 및 이미지 로드
+- `AgentTools.layout`: 레이아웃 감지/요약
+- `AgentTools.ocr`: OCR 결과 필터링/정렬 (현재 스텁)
+- `AgentTools.extraction`: 문제 경계 탐지, 크롭, 검증
+- `AgentTools.workflow`: 기존 워크플로우 래핑 및 단계 실행 보조
 
 ## 📐 Idris2 명세 개요
 
