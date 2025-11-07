@@ -397,97 +397,96 @@ def detect_problem_boundaries(strategy: BoundaryStrategy,
     if not markers:
         return []
 
+    # Group markers by column
+    column_markers = {}  # {col_idx: [(marker, marker_idx)]}
+
+    for idx, marker in enumerate(markers):
+        marker_x = marker.position.x
+        col_idx = -1
+
+        if layout.columns:
+            for c_idx, col in enumerate(layout.columns):
+                if col.left_x <= marker_x <= col.right_x:
+                    col_idx = c_idx
+                    break
+
+        if col_idx not in column_markers:
+            column_markers[col_idx] = []
+        column_markers[col_idx].append((marker, idx))
+
     boundaries = []
     page_height = layout.page_height
     page_width = layout.page_width
 
-    for i, marker in enumerate(markers):
-        problem_num = marker.marker_number
-        marker_y = marker.position.y
+    # Process each column separately
+    for col_idx, col_marker_list in column_markers.items():
+        # Sort markers in this column by y position
+        col_marker_list.sort(key=lambda x: x[0].position.y)
 
-        # Find which column this marker belongs to
-        marker_x = marker.position.x
-        column_x_start = 0
-        column_x_end = page_width
-        current_column = None
-
-        if layout.columns:
-            for col in layout.columns:
-                if col.left_x <= marker_x <= col.right_x:
-                    column_x_start = col.left_x
-                    column_x_end = col.right_x
-                    current_column = col
-                    break
-
-        # Strategy: Problem N area = from problem N marker to problem N+1 marker
-        # For the first problem in a column, start from top (0 or previous column's end)
-        # This includes content between markers (full problem content)
-
-        # Start position: current marker position
-        start_y = marker_y
-
-        # BUT: if this is the first problem in the column,
-        # include content from top of column (or previous problem's end)
-        if i == 0:
-            # Very first marker - start from page top
-            start_y = 0
+        # Get column boundaries
+        if col_idx >= 0 and layout.columns:
+            column_x_start = layout.columns[col_idx].left_x
+            column_x_end = layout.columns[col_idx].right_x
         else:
-            # Check if there's a previous marker in the same column
-            has_prev_in_column = False
-            for prev_marker in reversed(markers[:i]):
-                prev_x = prev_marker.position.x
-                if current_column is not None:
-                    if current_column.left_x <= prev_x <= current_column.right_x:
-                        has_prev_in_column = True
-                        break
-                else:
-                    has_prev_in_column = True
-                    break
+            column_x_start = 0
+            column_x_end = page_width
 
-            if not has_prev_in_column:
-                # First marker in this column - start from column top
+        # For each marker in this column
+        for i, (marker, _) in enumerate(col_marker_list):
+            problem_num = marker.marker_number
+
+            # NEW STRATEGY: Problem N = (prev content end) ~ (next marker or page end)
+            #
+            # Example:
+            #   y=0: [page start]
+            #   y=100: [passage/image]
+            #   y=200: "6." ← marker for problem 6
+            #   y=300: [problem 6 content]
+            #   y=400: "7." ← marker for problem 7
+            #   y=500: [problem 7 content]
+            #   y=600: [page end]
+            #
+            # Problem 6 = 0 ~ 400 (includes passage above marker + content below)
+            # Problem 7 = 400 ~ 600
+
+            # Start: previous marker (or column top if first)
+            if i == 0:
                 start_y = 0
-
-        # Find end position: next marker IN THE SAME COLUMN or page end
-        end_y = page_height
-
-        # Look for next marker in the same column
-        for next_marker in markers[i + 1:]:
-            next_x = next_marker.position.x
-            # Check if next marker is in the same column
-            if current_column is not None:
-                if current_column.left_x <= next_x <= current_column.right_x:
-                    end_y = next_marker.position.y
-                    break
             else:
-                # No column info, just use next marker
+                prev_marker = col_marker_list[i - 1][0]
+                start_y = prev_marker.position.y
+
+            # End: next marker (or page bottom if last)
+            if i < len(col_marker_list) - 1:
+                next_marker = col_marker_list[i + 1][0]
                 end_y = next_marker.position.y
-                break
+            else:
+                end_y = page_height
 
-        # Adjust using nearby gaps (if available)
-        if gaps:
-            # Find closest gap between start_y and end_y
-            nearby_gaps = [g for g in gaps if start_y < g < end_y]
-            if nearby_gaps:
-                # Use the last gap before next marker as boundary
-                end_y = nearby_gaps[-1]
+            # Adjust using nearby gaps (if available)
+            if gaps:
+                # Find closest gap between start_y and end_y
+                nearby_gaps = [g for g in gaps if start_y < g < end_y]
+                if nearby_gaps:
+                    # Use the last gap before next marker as boundary
+                    end_y = nearby_gaps[-1]
 
-        # Create bounding box for this problem
-        # Use column width (not full page width) to avoid mixing columns
-        height = end_y - start_y
+            # Create bounding box
+            height = end_y - start_y
 
-        # Skip invalid boxes (negative height)
-        if height <= 0:
-            print(f"   ⚠ Skipping problem {problem_num}: invalid height {height}")
-            continue
+            # Skip invalid boxes
+            if height <= 0:
+                print(f"   ⚠ Skipping problem {problem_num}: invalid height {height}")
+                continue
 
-        bbox = BBox(
-            top_left=Coord(column_x_start, start_y),
-            width=column_x_end - column_x_start,
-            height=height
-        )
+            bbox = BBox(
+                top_left=Coord(column_x_start, start_y),
+                width=column_x_end - column_x_start,
+                height=height
+            )
 
-        boundaries.append((problem_num, bbox))
+            boundaries.append((problem_num, bbox))
+            print(f"   📦 문제 {problem_num}: y={start_y} ~ {end_y} (높이={height}px)")
 
     return boundaries
 
