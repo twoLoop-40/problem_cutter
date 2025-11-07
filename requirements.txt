@@ -1,0 +1,18 @@
+# Core dependencies
+opencv-python>=4.8.0
+numpy>=1.24.0
+
+# PDF handling (choose one or both)
+PyMuPDF>=1.23.0          # Recommended: faster, no external deps
+pdf2image>=1.16.0        # Alternative: requires poppler
+
+# OCR (optional, for text extraction)
+pytesseract>=0.3.10
+easyocr>=1.7.0
+
+# Image processing
+Pillow>=10.0.0
+
+# Utilities
+python-dotenv>=1.0.0
+
