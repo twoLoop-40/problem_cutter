@@ -1,0 +1,21 @@
+package problem_cutter
+
+authors = "Problem Cutter Team"
+version = "2.1.0"
+brief = "PDF Problem Extraction with Formal Specifications"
+
+sourcedir = ".specs"
+
+modules = System.Base
+        , System.ExtractionWorkflow
+        , System.LangGraphWorkflow
+        , System.LayoutDetection
+        , System.OcrEngine
+        , System.OutputFormat
+        , System.PdfMetadata
+        , System.ProblemBoundary
+        , System.ProblemExtraction
+        , System.Workflow
+        , System.AgentWorkflow
+
+depends = base

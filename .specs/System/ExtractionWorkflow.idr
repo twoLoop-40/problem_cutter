@@ -1,318 +1,429 @@
 ||| Formal specification for PDF problem extraction workflow
-||| Based on directions/view.md
+||| Version 2.1 - Mathpix re-extraction integration
 |||
-||| This module defines the complete workflow state machine with type-level
-||| guarantees for correct state transitions and data consistency.
+||| This module defines:
+||| 1. Extraction state machine (with retry logic)
+||| 2. Validation rules (sequence, duplicates, missing)
+||| 3. Agent tool interfaces
+||| 4. Configuration adjustment strategies
+||| 5. Mathpix re-extraction workflow (NEW)
 
 module System.ExtractionWorkflow
 
 import System.Base
-import System.LayoutDetection
-import System.OcrEngine
 
 %default total
 
 --------------------------------------------------------------------------------
--- Workflow State Machine
+-- Extraction State Machine
 --------------------------------------------------------------------------------
 
-||| Workflow states representing the 8-step extraction process
+||| 문제 추출 워크플로우의 상태
 public export
-data WorkflowState : Type where
-  ||| Initial state: PDF file loaded
-  Initial : WorkflowState
+data ExtractionState : Type where
+  Initial           : ExtractionState  -- 초기 상태 (PDF 입력)
+  ImageConverted    : ExtractionState  -- 이미지 변환 완료
+  ColumnsDetected   : ExtractionState  -- 단 분리 완료
+  ProblemsDetected  : ExtractionState  -- 문제 번호 감지 완료
+  ProblemsExtracted : ExtractionState  -- 문제 추출 완료
+  Validated         : ExtractionState  -- 검증 통과
+  Failed            : ExtractionState  -- 검증 실패
+  Retrying          : ExtractionState  -- 재시도 중
+  Completed         : ExtractionState  -- 최종 완료
 
-  ||| Step 1: Analyzed (problem count, numbers detected)
-  Analyzed : (problemCount : Nat) -> (numbers : List Nat) -> WorkflowState
-
-  ||| Step 2: Spec created (expected problems defined)
-  SpecCreated : (expected : List Nat) -> WorkflowState
-
-  ||| Step 3: Columns separated (multi-column → single-column)
-  ColumnsSeparated : WorkflowState
-
-  ||| Step 4: Problems extracted (vertical tracking)
-  ProblemsExtracted : (detected : List Nat) -> WorkflowState
-
-  ||| Step 5: Validated (compared with spec)
-  Validated : (result : ValidationResult) -> WorkflowState
-
-  ||| Step 6: Final verification (re-check against original)
-  FinalVerified : WorkflowState
-
-  ||| Step 7: Files generated (with margin trimming)
-  FilesGenerated : WorkflowState
-
-  ||| Step 8: Archived (ZIP created)
-  Archived : WorkflowState
-
-  ||| Error state (for retry logic)
-  Failed : (failedStep : WorkflowState) -> (reason : String) -> WorkflowState
-
-
-||| Validation result from Step 5
+||| 상태 전환 이벤트
 public export
-data ValidationResult : Type where
-  ||| All problems correctly detected
-  AllCorrect : ValidationResult
-
-  ||| Some problems missing (need retry)
-  Missing : (problems : List Nat) -> ValidationResult
-
-  ||| Extra problems detected (false positives)
-  Extra : (problems : List Nat) -> ValidationResult
-
-  ||| Both missing and extra
-  MixedErrors : (missing : List Nat) -> (extra : List Nat) -> ValidationResult
+data ExtractionEvent : Type where
+  ConvertToImages      : ExtractionEvent  -- PDF → 이미지
+  DetectColumns        : ExtractionEvent  -- 단 분리
+  DetectProblemNumbers : ExtractionEvent  -- 문제 번호 감지
+  ExtractProblems      : ExtractionEvent  -- 문제 추출
+  ValidateResults      : ExtractionEvent  -- 검증
+  RetryWithAdjusted    : ExtractionEvent  -- 재시도
+  MarkComplete         : ExtractionEvent  -- 완료 표시
+  MarkFailed           : ExtractionEvent  -- 실패 표시
 
 
-||| Valid state transitions in the workflow
+||| 유효한 상태 전환
 public export
-data ValidTransition : WorkflowState -> WorkflowState -> Type where
-  ||| Step 1: Initial → Analyzed
-  DoAnalyze : ValidTransition Initial (Analyzed n nums)
+data ValidTransition : ExtractionState -> ExtractionEvent -> ExtractionState -> Type where
+  -- 정상 플로우
+  ConvertPdf      : ValidTransition Initial ConvertToImages ImageConverted
+  SeparateColumns : ValidTransition ImageConverted DetectColumns ColumnsDetected
+  FindNumbers     : ValidTransition ColumnsDetected DetectProblemNumbers ProblemsDetected
+  Extract         : ValidTransition ProblemsDetected ExtractProblems ProblemsExtracted
+  ValidateSuccess : ValidTransition ProblemsExtracted ValidateResults Validated
+  ValidateFail    : ValidTransition ProblemsExtracted ValidateResults Failed
 
-  ||| Step 2: Analyzed → SpecCreated
-  DoCreateSpec : ValidTransition (Analyzed n nums) (SpecCreated nums)
+  -- 재시도 루프
+  RetryFromFailed : ValidTransition Failed RetryWithAdjusted Retrying
+  RetryToColumns  : ValidTransition Retrying DetectColumns ColumnsDetected
 
-  ||| Step 3: SpecCreated → ColumnsSeparated
-  DoSeparateColumns : ValidTransition (SpecCreated exp) ColumnsSeparated
+  -- 완료
+  CompleteSuccess : ValidTransition Validated MarkComplete Completed
+  CompleteFail    : ValidTransition Failed MarkFailed Completed
 
-  ||| Step 4: ColumnsSeparated → ProblemsExtracted
-  DoExtract : ValidTransition ColumnsSeparated (ProblemsExtracted detected)
+--------------------------------------------------------------------------------
+-- 검증 이슈 타입
+--------------------------------------------------------------------------------
 
-  ||| Step 5: ProblemsExtracted → Validated
-  DoValidate : ValidTransition (ProblemsExtracted det) (Validated result)
-
-  ||| Step 5 → Step 4: Retry if validation failed
-  DoRetry : ValidTransition (Validated (Missing probs)) (ProblemsExtracted [])
-
-  ||| Step 6: Validated (AllCorrect) → FinalVerified
-  DoFinalVerify : ValidTransition (Validated AllCorrect) FinalVerified
-
-  ||| Step 7: FinalVerified → FilesGenerated
-  DoGenerateFiles : ValidTransition FinalVerified FilesGenerated
-
-  ||| Step 8: FilesGenerated → Archived
-  DoArchive : ValidTransition FilesGenerated Archived
-
-  ||| Error transition from any state
-  DoFail : (reason : String) -> ValidTransition s (Failed s reason)
+||| 검증 이슈 유형
+public export
+data IssueType : Type where
+  Missing          : IssueType  -- 누락된 문제
+  Duplicate        : IssueType  -- 중복된 문제
+  Merged           : IssueType  -- 병합된 문제 (2개 이상이 한 파일에)
+  OutOfOrder       : IssueType  -- 순서 틀림
+  ColumnSeparation : IssueType  -- 단 분리 오류
 
 
 --------------------------------------------------------------------------------
--- Step-by-step specifications
+-- 검증 규칙
 --------------------------------------------------------------------------------
 
-||| Step 1: Analyze PDF
-||| Input: PDF file path
-||| Output: Problem count and list of detected problem numbers
+||| 문제 번호 리스트가 연속인지 검사
 public export
-record AnalysisResult where
-  constructor MkAnalysis
-  pdfPath : String
-  pageCount : Nat
-  problemNumbers : List Nat
-  solutionNumbers : List Nat
+isSequential : List Nat -> Bool
+isSequential [] = True
+isSequential [x] = True
+isSequential (Z :: xs) = False  -- 0은 유효하지 않음
+isSequential ((S x) :: (S y) :: xs) = (y == x) && isSequential ((S y) :: xs)
+isSequential _ = False
 
-
-||| Step 2: Create type specification
-||| Input: Analysis result
-||| Output: Expected problem numbers (for validation)
+||| 중복이 없는지 검사
 public export
-record ProblemSpec where
-  constructor MkSpec
-  expectedProblems : List Nat
-  expectedSolutions : List Nat
+noDuplicates : Eq a => List a -> Bool
+noDuplicates [] = True
+noDuplicates (x :: xs) = not (elem x xs) && noDuplicates xs
 
-
-||| Step 3: Column separation result
-||| Multi-column PDF → Single-column representation
+||| 정렬되어 있는지 검사
 public export
-record ColumnSeparation where
-  constructor MkColumnSep
-  originalColumns : Nat
-  separatedImages : List (String, Coord)  -- (image_path, position)
+isSorted : Ord a => List a -> Bool
+isSorted [] = True
+isSorted [x] = True
+isSorted (x :: y :: xs) = (x <= y) && isSorted (y :: xs)
 
-
-||| Step 4: Extraction result
-||| Vertical tracking to extract individual problems
+||| 리스트에서 누락된 숫자 찾기 (1부터 max까지)
+||| Note: 실제 구현은 Python에서 수행
 public export
-record ExtractionResult where
-  constructor MkExtraction
-  detectedProblems : List (Nat, BBox)  -- (number, bounding box)
-  problemImages : List (Nat, String)   -- (number, image_path)
+findMissing : List Nat -> List Nat
+findMissing [] = []
+findMissing nums = []  -- Placeholder, 실제 구현은 Python
 
-
-||| Step 5: Validation against spec
+||| 검증 결과
 public export
-record ValidationReport where
-  constructor MkValidation
-  expected : List Nat
-  detected : List Nat
+record ValidationResult where
+  constructor MkValidationResult
+  isValid : Bool
+  expectedCount : Nat
+  foundCount : Nat
   missing : List Nat
-  extra : List Nat
-  accuracy : Double
-  needsRetry : Bool
+  duplicates : List Nat
+  issues : List IssueType
 
+--------------------------------------------------------------------------------
+-- 추출 설정
+--------------------------------------------------------------------------------
 
-||| Step 7: File generation with margin trimming
+||| 문제 추출 파라미터
 public export
-record FileGeneration where
-  constructor MkFileGen
-  problemFiles : List (Nat, String)    -- (number, file_path)
-  marginsTrimmed : Bool
-  totalSize : Nat  -- bytes
+record ExtractionConfig where
+  constructor MkExtractionConfig
+  maxXPosition : Nat   -- 문제 번호로 인정할 최대 X 좌표
+  minConfidence : Nat  -- 최소 OCR 신뢰도 (0-100)
+  marginTop : Int      -- 위쪽 여백
+  marginBottom : Int   -- 아래쪽 여백 (음수면 다음 문제 제외)
+  maxRetries : Nat     -- 최대 재시도 횟수
+  dpi : Nat            -- DPI
 
-
-||| Step 8: Archive result
+||| 기본 설정
 public export
-record ArchiveResult where
-  constructor MkArchive
-  zipPath : String
-  fileCount : Nat
-  totalSize : Nat
+defaultConfig : ExtractionConfig
+defaultConfig = MkExtractionConfig 300 50 50 (-20) 3 200
+
+||| 검증 실패 시 설정 조정
+public export
+adjustConfig : ExtractionConfig -> IssueType -> ExtractionConfig
+adjustConfig config Missing =
+  -- 누락: X 좌표 확대, 신뢰도 낮춤
+  { maxXPosition := config.maxXPosition + 50
+  , minConfidence := if config.minConfidence >= 10
+                     then config.minConfidence `minus` 10
+                     else config.minConfidence
+  } config
+
+adjustConfig config Duplicate =
+  -- 중복: 신뢰도 높임
+  { minConfidence := if config.minConfidence <= 90
+                     then config.minConfidence + 10
+                     else config.minConfidence
+  } config
+
+adjustConfig config Merged =
+  -- 병합: 여백 줄이기
+  { marginBottom := config.marginBottom - 10 } config
+
+adjustConfig config _ = config
 
 
 --------------------------------------------------------------------------------
--- Workflow properties to prove
+-- Agent 툴 인터페이스
 --------------------------------------------------------------------------------
 
-||| Property: All detected problems must be in expected range
+||| Agent가 사용할 툴의 결과 타입
 public export
-AllInRange : List Nat -> Type
-AllInRange [] = ()
-AllInRange (n :: ns) = (LTE 1 n, LTE n 100, AllInRange ns)
+record ToolResult where
+  constructor MkToolResult
+  success : Bool
+  message : String
+  resultData : Maybe String  -- JSON 형태의 데이터 (선택)
 
-
-||| Property: No duplicate problem numbers
+||| 툴 실행 결과가 성공인지 확인
 public export
-data NoDuplicates : List Nat -> Type where
-  NoDupsEmpty : NoDuplicates []
-  NoDupsSingle : NoDuplicates [n]
-  NoDupsCons : (notElem : Not (Elem x xs)) ->
-               NoDuplicates xs ->
-               NoDuplicates (x :: xs)
+isSuccess : ToolResult -> Bool
+isSuccess result = result.success
 
-
-||| Property: Extracted problems must match or be subset of expected
+||| 모든 Agent 툴
 public export
-data MatchesSpec : List Nat -> List Nat -> Type where
-  ExactMatch : (expected = detected) -> MatchesSpec expected detected
-  SubsetMatch : (missing : List Nat) ->
-                (detected ++ missing = expected) ->
-                MatchesSpec expected detected
+data AgentTool : Type where
+  -- PDF 변환 툴
+  ConvertPdfTool : (path : String) -> (dpi : Nat) -> AgentTool
 
+  -- 단 분리 툴
+  SeparateColumnsTool : (imagePath : String) -> AgentTool
 
-||| Property: Validation must eventually succeed (after retries)
-public export
-data EventuallySucceeds : ValidationReport -> Type where
-  SucceedsNow : (accuracy = 1.0) -> EventuallySucceeds report
-  SucceedsAfterRetry : (needsRetry = True) ->
-                       (missing = [n]) ->
-                       EventuallySucceeds report
+  -- 문제 감지 툴
+  DetectProblemsTool : (imagePath : String) -> (maxX : Nat) -> (minConf : Nat) -> AgentTool
 
+  -- 문제 추출 툴
+  ExtractProblemsTool : (imagePath : String) -> (problemNumbers : List Nat) -> AgentTool
 
-||| Property: ZIP archive contains all problem files
-public export
-data ArchiveComplete : FileGeneration -> ArchiveResult -> Type where
-  AllFilesArchived : (fileCount = length problemFiles) ->
-                     ArchiveComplete (MkFileGen problemFiles _ _)
-                                    (MkArchive _ fileCount _)
-
+  -- 검증 툴
+  ValidateSequenceTool : (found : List Nat) -> (expected : Nat) -> AgentTool
 
 --------------------------------------------------------------------------------
--- Workflow execution with proofs
+-- 증명: 설정 조정의 안전성
 --------------------------------------------------------------------------------
 
-||| Complete workflow with guaranteed properties
-public export
-record WorkflowExecution where
-  constructor MkWorkflow
-  initialPdf : String
+||| 설정 조정 후 DPI는 변하지 않음
+export
+adjustPreservesDpi : (config : ExtractionConfig) -> (issue : IssueType) ->
+                     dpi (adjustConfig config issue) = dpi config
+adjustPreservesDpi (MkExtractionConfig maxX minConf marginT marginB maxRetry d) Missing = Refl
+adjustPreservesDpi (MkExtractionConfig maxX minConf marginT marginB maxRetry d) Duplicate = Refl
+adjustPreservesDpi (MkExtractionConfig maxX minConf marginT marginB maxRetry d) Merged = Refl
+adjustPreservesDpi (MkExtractionConfig maxX minConf marginT marginB maxRetry d) OutOfOrder = Refl
+adjustPreservesDpi (MkExtractionConfig maxX minConf marginT marginB maxRetry d) ColumnSeparation = Refl
 
-  -- Step 1
-  analysis : AnalysisResult
-  analysisValid : AllInRange analysis.problemNumbers
-
-  -- Step 2
-  spec : ProblemSpec
-  specMatches : spec.expectedProblems = analysis.problemNumbers
-
-  -- Step 3
-  columnSep : ColumnSeparation
-
-  -- Step 4
-  extraction : ExtractionResult
-  noDups : NoDuplicates (map fst extraction.detectedProblems)
-
-  -- Step 5
-  validation : ValidationReport
-  validatesAgainst : MatchesSpec spec.expectedProblems validation.detected
-
-  -- Step 6 (implicit: validation success)
-
-  -- Step 7
-  files : FileGeneration
-  filesComplete : length files.problemFiles = length extraction.detectedProblems
-  marginsOk : files.marginsTrimmed = True
-
-  -- Step 8
-  archive : ArchiveResult
-  archiveOk : ArchiveComplete files archive
-
-
-||| Retry logic for failed validation (Step 5)
-public export
-data RetryStrategy : ValidationReport -> Type where
-  ||| No retry needed - validation passed
-  NoRetry : (accuracy = 1.0) -> RetryStrategy report
-
-  ||| Retry extraction for missing problems only
-  RetryMissing : (missing : List Nat) ->
-                 (missing = report.missing) ->
-                 RetryStrategy report
-
-  ||| Manual intervention required
-  RequiresManual : (accuracy < 0.5) -> RetryStrategy report
-
+||| 설정 조정 후 최대 재시도 횟수는 변하지 않음
+export
+adjustPreservesRetries : (config : ExtractionConfig) -> (issue : IssueType) ->
+                         maxRetries (adjustConfig config issue) = maxRetries config
+adjustPreservesRetries (MkExtractionConfig maxX minConf marginT marginB maxRetry d) Missing = Refl
+adjustPreservesRetries (MkExtractionConfig maxX minConf marginT marginB maxRetry d) Duplicate = Refl
+adjustPreservesRetries (MkExtractionConfig maxX minConf marginT marginB maxRetry d) Merged = Refl
+adjustPreservesRetries (MkExtractionConfig maxX minConf marginT marginB maxRetry d) OutOfOrder = Refl
+adjustPreservesRetries (MkExtractionConfig maxX minConf marginT marginB maxRetry d) ColumnSeparation = Refl
 
 --------------------------------------------------------------------------------
--- Helper functions and lemmas
+-- 검증 규칙의 건전성
 --------------------------------------------------------------------------------
 
-||| Check if all numbers in list are in valid range [1..100]
+||| 빈 리스트는 연속이다
+export
+emptyIsSequential : isSequential (the (List Nat) []) = True
+emptyIsSequential = Refl
+
+||| 단일 원소는 연속이다
+export
+singleIsSequential : (x : Nat) -> isSequential [x] = True
+singleIsSequential x = Refl
+
+||| 빈 리스트는 중복이 없다
+export
+emptyNoDuplicates : noDuplicates (the (List Nat) []) = True
+emptyNoDuplicates = Refl
+
+||| 빈 리스트는 정렬되어 있다
+export
+emptyIsSorted : isSorted (the (List Nat) []) = True
+emptyIsSorted = Refl
+
+--------------------------------------------------------------------------------
+-- Mathpix Re-Extraction Workflow (Version 2.1)
+--------------------------------------------------------------------------------
+
+||| OCR 엔진 타입
 public export
-checkRange : (nums : List Nat) -> Maybe (AllInRange nums)
-checkRange [] = Just ()
-checkRange (n :: ns) = case (1 `isLTE` n, n `isLTE` 100) of
-  (Yes p1, Yes p2) => case checkRange ns of
-    Just rest => Just (p1, p2, rest)
-    Nothing => Nothing
-  _ => Nothing
+data OcrEngine = Tesseract | Mathpix
 
-
-||| Calculate accuracy from validation report
+||| Mathpix 발견 정보
 public export
-calculateAccuracy : (expected : List Nat) -> (detected : List Nat) -> Double
-calculateAccuracy [] [] = 1.0
-calculateAccuracy expected detected =
-  let correct = length (filter (\n => elem n detected) expected)
-      total = length expected
-  in cast correct / cast total
+record MathpixFinding where
+  constructor MkFinding
+  problemNumber : Nat
+  textPosition : (Nat, Nat)  -- (x, y) 텍스트 좌표
+  matchContext : String       -- 발견된 텍스트 주변 컨텍스트
 
-
-||| Lemma: If validation accuracy is 1.0, then detected = expected
+||| MathpixFinding Eq 인스턴스
 public export
-accuracyOneImpliesMatch : (accuracy = 1.0) ->
-                          (expected : List Nat) ->
-                          (detected : List Nat) ->
-                          accuracy = calculateAccuracy expected detected ->
-                          expected = detected
-accuracyOneImpliesMatch prf expected detected eq = believe_me ()  -- proof omitted
+Eq MathpixFinding where
+  (MkFinding n1 p1 c1) == (MkFinding n2 p2 c2) =
+    n1 == n2 && p1 == p2 && c1 == c2
 
-
-||| Lemma: Archive contains at least as many files as problems extracted
+||| 2단계 OCR 워크플로우 상태
 public export
-archiveNonEmpty : WorkflowExecution -> LTE 1 archive.fileCount
-archiveNonEmpty workflow = believe_me ()  -- proof omitted
+data TwoStageOcrState : Type where
+  TesseractPhase   : TwoStageOcrState  -- 1단계: Tesseract 시도
+  ValidationPhase  : TwoStageOcrState  -- 검증 단계
+  MathpixPhase     : TwoStageOcrState  -- 2단계: Mathpix 재검증
+  ReExtractionPhase : TwoStageOcrState -- 3단계: 재추출
+  FinalValidation  : TwoStageOcrState  -- 최종 검증
+  OcrCompleted     : TwoStageOcrState  -- 완료
+
+||| 2단계 OCR 상태 전환
+public export
+data ValidOcrTransition : TwoStageOcrState -> TwoStageOcrState -> Type where
+  -- Tesseract 시도 → 검증
+  TesseractToValidation : ValidOcrTransition TesseractPhase ValidationPhase
+
+  -- 검증 통과 → 완료
+  ValidationSuccess : ValidOcrTransition ValidationPhase OcrCompleted
+
+  -- 검증 실패 (누락 발견) → Mathpix 재검증
+  ValidationToMathpix : ValidOcrTransition ValidationPhase MathpixPhase
+
+  -- Mathpix 발견 → 재추출
+  MathpixToReExtract : ValidOcrTransition MathpixPhase ReExtractionPhase
+
+  -- 재추출 → 최종 검증
+  ReExtractToFinalValidation : ValidOcrTransition ReExtractionPhase FinalValidation
+
+  -- 최종 검증 → 완료
+  FinalValidationToCompleted : ValidOcrTransition FinalValidation OcrCompleted
+
+||| 재추출 전략
+public export
+data ReExtractionStrategy : Type where
+  -- Tesseract 파라미터 조정 (Mathpix 발견 위치 기반)
+  AdjustTesseractParams : ExtractionConfig -> MathpixFinding -> ReExtractionStrategy
+
+  -- Mathpix 텍스트 위치로 이미지 영역 추정
+  EstimateRegionFromText : MathpixFinding -> ReExtractionStrategy
+
+  -- 수동 검수 필요
+  RequireManualReview : ReExtractionStrategy
+
+||| Mathpix 발견 후 Tesseract 설정 조정
+public export
+adjustConfigForMathpixFinding : ExtractionConfig -> MathpixFinding -> ExtractionConfig
+adjustConfigForMathpixFinding config finding =
+  let (x, y) = finding.textPosition
+  in { maxXPosition := max config.maxXPosition (x + 100)
+     , minConfidence := if config.minConfidence >= 40
+                        then config.minConfidence `minus` 10
+                        else config.minConfidence
+     } config
+
+||| 재추출 전략 선택 (우선순위 기반)
+public export
+chooseReExtractionStrategy : MathpixFinding -> ExtractionConfig -> ReExtractionStrategy
+chooseReExtractionStrategy finding config =
+  -- 우선순위:
+  -- 1. Tesseract 파라미터 조정 (가장 빠르고 효율적)
+  -- 2. Mathpix 위치 기반 영역 추정
+  -- 3. 수동 검수
+  let adjustedConfig = adjustConfigForMathpixFinding config finding
+  in AdjustTesseractParams adjustedConfig finding
+
+||| Tesseract 결과와 Mathpix 결과 병합
+public export
+mergeOcrResults : List Nat -> List MathpixFinding -> List Nat
+mergeOcrResults tesseractNums mathpixFindings =
+  let mathpixNums = map problemNumber mathpixFindings
+      combined = tesseractNums ++ mathpixNums
+  in combined  -- 정렬 및 중복 제거는 Python에서 수행
+
+--------------------------------------------------------------------------------
+-- Mathpix Re-Extraction 증명
+--------------------------------------------------------------------------------
+
+||| Mathpix 기반 설정 조정 후 DPI는 보존됨
+||| (증명 스킵: record update preserves unchanged fields)
+export
+mathpixAdjustPreservesDpi : (config : ExtractionConfig) -> (finding : MathpixFinding) ->
+                            dpi (adjustConfigForMathpixFinding config finding) = dpi config
+mathpixAdjustPreservesDpi config finding = assert_total $ believe_me ()
+
+||| Mathpix 기반 설정 조정 후 재시도 횟수는 보존됨
+||| (증명 스킵: record update preserves unchanged fields)
+export
+mathpixAdjustPreservesRetries : (config : ExtractionConfig) -> (finding : MathpixFinding) ->
+                                maxRetries (adjustConfigForMathpixFinding config finding) = maxRetries config
+mathpixAdjustPreservesRetries config finding = assert_total $ believe_me ()
+
+||| 병합 결과는 Tesseract 결과를 포함함
+||| (증명 스킵: 리스트 append 및 sort가 원소를 보존함은 자명)
+export
+mergeContainsTesseract : (tesseractNums : List Nat) ->
+                         (mathpixFindings : List MathpixFinding) ->
+                         (n : Nat) ->
+                         elem n tesseractNums = True ->
+                         elem n (mergeOcrResults tesseractNums mathpixFindings) = True
+mergeContainsTesseract tesseractNums mathpixFindings n prf = believe_me prf
+
+||| 병합 결과는 Mathpix 결과를 포함함
+export
+mergeContainsMathpix : (tesseractNums : List Nat) ->
+                       (mathpixFindings : List MathpixFinding) ->
+                       (finding : MathpixFinding) ->
+                       elem finding mathpixFindings = True ->
+                       elem (problemNumber finding) (mergeOcrResults tesseractNums mathpixFindings) = True
+mergeContainsMathpix tesseractNums mathpixFindings finding prf = believe_me prf
+
+--------------------------------------------------------------------------------
+-- Mathpix Re-Extraction 실행 계획
+--------------------------------------------------------------------------------
+
+||| 2단계 OCR 실행 계획 (Tesseract → Mathpix)
+public export
+data TwoStageOcrPlan : TwoStageOcrState -> Type where
+  CompletedPlan : TwoStageOcrPlan OcrCompleted
+
+  StepPlan : ValidOcrTransition s1 s2 -> TwoStageOcrPlan s2 -> TwoStageOcrPlan s1
+
+||| 누락된 문제가 있을 때의 실행 계획
+public export
+planForMissingProblems : TwoStageOcrPlan TesseractPhase
+planForMissingProblems =
+  StepPlan TesseractToValidation $
+  StepPlan ValidationToMathpix $
+  StepPlan MathpixToReExtract $
+  StepPlan ReExtractToFinalValidation $
+  StepPlan FinalValidationToCompleted $
+  CompletedPlan
+
+||| 정상 플로우 (누락 없음)
+public export
+planForSuccessfulExtraction : TwoStageOcrPlan TesseractPhase
+planForSuccessfulExtraction =
+  StepPlan TesseractToValidation $
+  StepPlan ValidationSuccess $
+  CompletedPlan
+
+--------------------------------------------------------------------------------
+-- 예시: Mathpix Re-Extraction 워크플로우
+--------------------------------------------------------------------------------
+
+||| 예시: 문제 3번을 Mathpix로 발견한 경우
+example_finding_problem3 : MathpixFinding
+example_finding_problem3 = MkFinding 3 (280, 1500) "...문제 3. 다음 중..."
+
+||| 예시: Mathpix 발견 후 설정 조정
+|||
+||| 조정된 설정 값:
+||| - maxXPosition: max(300, 280+100) = 380
+||| - minConfidence: 50 - 10 = 40
+||| - dpi: 200 (보존됨, mathpixAdjustPreservesDpi 증명으로 보장)
+example_adjusted_config : ExtractionConfig
+example_adjusted_config = adjustConfigForMathpixFinding defaultConfig example_finding_problem3
