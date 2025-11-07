@@ -430,8 +430,10 @@ def run_mathpix_ocr(image, app_id: str = None, app_key: str = None) -> List[OcrR
         "formats": ["text", "data"],  # Request text and structured data
         "data_options": {
             "include_asciimath": False,
-            "include_latex": False
-        }
+            "include_latex": False,
+            "include_word_data": True,
+            "include_substitutions": False,
+        },
     }
 
     response = requests.post(url, json=data, headers=headers)
@@ -440,8 +442,9 @@ def run_mathpix_ocr(image, app_id: str = None, app_key: str = None) -> List[OcrR
     result = response.json()
 
     # Debug: print response structure
-    import json
     print(f"\n[DEBUG] Mathpix API response keys: {result.keys()}")
+    if "error" in result:
+        print(f"[DEBUG] Mathpix error: {result['error']} -> {result.get('error_info')}")
     if "data" in result:
         print(f"[DEBUG] Number of data blocks: {len(result['data'])}")
     if "text" in result:
@@ -452,31 +455,61 @@ def run_mathpix_ocr(image, app_id: str = None, app_key: str = None) -> List[OcrR
     ocr_results = []
 
     # Extract from "data" field (structured text blocks)
-    if "data" in result:
-        for block in result.get("data", []):
-            if "value" in block and "position" in block:
-                text = block["value"]
-                pos = block["position"]
+    def _bbox_from_position(position: dict) -> BBox:
+        """Convert Mathpix position dict to BBox"""
+        if not position:
+            return BBox(Coord(0, 0), 0, 0)
 
-                # Create BBox from position
-                # Mathpix returns: {top_left_x, top_left_y, width, height}
-                bbox = BBox(
-                    top_left=Coord(
-                        int(pos.get("top_left_x", 0)),
-                        int(pos.get("top_left_y", 0))
-                    ),
-                    width=int(pos.get("width", 0)),
-                    height=int(pos.get("height", 0))
-                )
+        if "top_left_x" in position and "top_left_y" in position:
+            return BBox(
+                top_left=Coord(int(position.get("top_left_x", 0)), int(position.get("top_left_y", 0))),
+                width=int(position.get("width", position.get("w", 0))),
+                height=int(position.get("height", position.get("h", 0))),
+            )
 
-                # Use high confidence for Mathpix (it's generally accurate)
-                confidence = Confidence(0.95)
+        # Some payloads use "box": [[x1, y1], [x2, y2], ...]
+        box = position.get("box") if isinstance(position, dict) else None
+        if box and len(box) >= 2:
+            (x1, y1), (x2, y2) = box[0], box[2]
+            return BBox(
+                top_left=Coord(int(x1), int(y1)),
+                width=int(x2 - x1),
+                height=int(y2 - y1),
+            )
 
-                ocr_results.append(OcrResult(
-                    text=text,
-                    bbox=bbox,
-                    confidence=confidence,
-                    language="kor+eng"
-                ))
+        return BBox(Coord(0, 0), 0, 0)
+
+    for block in result.get("data", []):
+        text = block.get("value") or block.get("text")
+        position = block.get("position") or block.get("bbox")
+
+        if not text:
+            continue
+
+        bbox = _bbox_from_position(position)
+
+        # Mathpix confidence가 없으면 기본값 사용
+        confidence_value = block.get("confidence")
+        confidence = Confidence(min(max(float(confidence_value), 0.0), 1.0)) if confidence_value else Confidence(0.95)
+
+        ocr_results.append(
+            OcrResult(
+                text=text,
+                bbox=bbox,
+                confidence=confidence,
+                language="kor+eng",
+            )
+        )
+
+    # 데이터 블록이 없을 경우 text 필드라도 반환
+    if not ocr_results and result.get("text"):
+        ocr_results.append(
+            OcrResult(
+                text=result["text"],
+                bbox=BBox(Coord(0, 0), image.shape[1], image.shape[0]),
+                confidence=Confidence(0.9),
+                language="kor+eng",
+            )
+        )
 
     return ocr_results

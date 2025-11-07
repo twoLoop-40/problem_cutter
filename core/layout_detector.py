@@ -127,7 +127,7 @@ class LayoutDetector:
             rho=1,
             theta=np.pi/180,
             threshold=100,
-            minLineLength=self.min_line_length,
+            minLineLength=int(self.min_line_length),
             maxLineGap=20
         )
         
