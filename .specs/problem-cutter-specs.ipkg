@@ -1,0 +1,9 @@
+package problem-cutter-specs
+
+sourcedir = "System"
+
+modules = System.Base
+        , System.LayoutDetection
+        , System.OcrEngine
+        , System.ExtractionWorkflow
+        , System.ProblemBoundary
