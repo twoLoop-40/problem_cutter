@@ -118,7 +118,8 @@ def detect_markers_in_linearized(
         if number is not None:
             # Get Y position (use top of bounding box)
             y_pos = result.bbox.top_left.y
-            conf = result.confidence
+            # Extract confidence value
+            conf = result.confidence.value if hasattr(result.confidence, 'value') else result.confidence
 
             markers.append(ProblemMarker(number, y_pos, conf))
 
@@ -167,7 +168,7 @@ def detect_shared_passages(
         if match:
             num1, num2 = int(match.group(1)), int(match.group(2))
             y_pos = result.bbox.top_left.y
-            conf = result.confidence
+            conf = result.confidence.value if hasattr(result.confidence, 'value') else result.confidence
             passages.append(SharedPassage([num1, num2], y_pos, conf))
             continue
 
@@ -176,7 +177,7 @@ def detect_shared_passages(
         if match:
             num1, num2 = int(match.group(1)), int(match.group(2))
             y_pos = result.bbox.top_left.y
-            conf = result.confidence
+            conf = result.confidence.value if hasattr(result.confidence, 'value') else result.confidence
             passages.append(SharedPassage([num1, num2], y_pos, conf))
 
     if passages:
