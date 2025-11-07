@@ -4,11 +4,11 @@
 ||| - File naming conventions (1_prb, 1_sol)
 ||| - Output types (image, PDF)
 ||| - ZIP packaging
-module OutputFormat
+module System.OutputFormat
 
-import Base
-import ProblemExtraction
-import PdfMetadata
+import System.Base
+import System.ProblemExtraction
+import System.PdfMetadata
 import Data.List.Quantifiers
 
 %default total

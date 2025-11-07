@@ -4,9 +4,9 @@
 ||| - Number of columns (1, 2, or 3)
 ||| - Vertical separator lines
 ||| - Column boundaries
-module LayoutDetection
+module System.LayoutDetection
 
-import Base
+import System.Base
 import Data.List
 import Data.List.Quantifiers
 import Data.Fin
@@ -131,4 +131,74 @@ mkTwoColumnFromVLine width height vline = MkPageLayout
   [vline]
   [MkColumnBound 0 (x vline),
    MkColumnBound (x vline) width]
+
+-------------------------------------------------------------------------
+-- Narrow column merging (to handle thick separator lines)
+-------------------------------------------------------------------------
+
+||| Calculate column width
+public export
+columnWidth : ColumnBound -> Nat
+columnWidth col = col.rightX `minus` col.leftX
+
+||| Check if a column is narrower than threshold
+|||
+||| Narrow columns (< 100px typically) are likely separator lines,
+||| not actual content columns
+public export
+isNarrowColumn : (threshold : Nat) -> ColumnBound -> Bool
+isNarrowColumn threshold col = columnWidth col < threshold
+
+||| Merge nearby vertical lines into one
+|||
+||| When a separator line has thickness (e.g., two lines at x=275 and x=295),
+||| they should be treated as a single separator
+|||
+||| @mergeThreshold Maximum distance between lines to merge (typically 20-50px)
+public export
+partial
+mergeNearbyVLines : (mergeThreshold : Nat) -> List VLine -> List VLine
+-- Implementation in Python:
+-- Group lines where abs(line1.x - line2.x) <= threshold
+-- Take average x position of the group
+
+||| Filter out columns narrower than threshold
+|||
+||| Returns only content columns, removing separator regions
+|||
+||| @minWidth Minimum column width (typically 100px)
+public export
+filterNarrowColumns : (minWidth : Nat) -> List ColumnBound -> List ColumnBound
+filterNarrowColumns minWidth = filter (not . isNarrowColumn minWidth)
+
+||| Proof that all columns are wide enough
+public export
+data AllWideEnough : (minWidth : Nat) -> List ColumnBound -> Type where
+  WideNil : AllWideEnough minWidth []
+  WideCons : (col : ColumnBound) ->
+             (cols : List ColumnBound) ->
+             (prf : minWidth `LTE` columnWidth col) ->
+             AllWideEnough minWidth cols ->
+             AllWideEnough minWidth (col :: cols)
+
+||| Create layout from merged lines
+|||
+||| This is the recommended way to create layouts:
+||| 1. Detect all vertical lines
+||| 2. Merge nearby lines (thick separators)
+||| 3. Create column boundaries
+||| 4. Filter out narrow "columns" (actual separators)
+public export
+partial
+mkLayoutFromMergedLines : (width : Nat) ->
+                         (height : Nat) ->
+                         List VLine ->
+                         PageLayout
+-- Implementation:
+-- 1. mergedLines = mergeNearbyVLines 20 lines
+-- 2. Create column bounds from merged lines
+-- 3. allColumns = create columns between (0, line1.x, line2.x, ..., width)
+-- 4. contentColumns = filterNarrowColumns 100 allColumns
+-- 5. Determine ColumnCount based on length contentColumns
+-- 6. Return PageLayout with contentColumns
 

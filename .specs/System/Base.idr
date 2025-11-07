@@ -1,8 +1,8 @@
 ||| Base types for PDF problem extraction
-||| 
+|||
 ||| This module defines fundamental types for representing
 ||| PDF coordinates, bounding boxes, and regions.
-module Base
+module System.Base
 
 import Data.Nat
 import Data.List.Quantifiers

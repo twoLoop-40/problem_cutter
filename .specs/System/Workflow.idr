@@ -2,13 +2,14 @@
 |||
 ||| This module ties together all components into a complete
 ||| workflow for extracting problems from PDFs.
-module Workflow
+module System.Workflow
 
-import Base
-import PdfMetadata
-import LayoutDetection
-import ProblemExtraction
-import OutputFormat
+import System.Base
+import System.PdfMetadata
+import System.LayoutDetection
+import System.OcrEngine
+import System.ProblemExtraction
+import System.OutputFormat
 
 %default total
 
@@ -18,6 +19,7 @@ data WorkflowState =
   Initial            -- Starting state
   | MetadataExtracted PdfMeta
   | LayoutDetected PageLayout PdfMeta
+  | OcrCompleted (List OcrResult) PageLayout PdfMeta  -- NEW: OCR stage
   | ContentExtracted ExtractionResult PageLayout PdfMeta
   | OutputGenerated OutputPackage
   | Failed String    -- Error state
@@ -27,17 +29,19 @@ public export
 data WorkflowStep =
   ExtractMetadata     -- Step 1: Extract metadata
   | DetectLayout      -- Step 2: Detect column layout
-  | ExtractProblems   -- Step 3: Extract problems
-  | ExtractSolutions  -- Step 4: Extract solutions
-  | PairProblemsSolutions  -- Step 5: Pair problems with solutions
-  | GenerateOutput    -- Step 6: Generate output files
+  | RunOCR            -- Step 3: Run OCR on PDF images (NEW!)
+  | ExtractProblems   -- Step 4: Extract problems using OCR
+  | ExtractSolutions  -- Step 5: Extract solutions using OCR
+  | PairProblemsSolutions  -- Step 6: Pair problems with solutions
+  | GenerateOutput    -- Step 7: Generate output files
 
 ||| Valid state transitions
 public export
 data ValidTransition : WorkflowState -> WorkflowStep -> WorkflowState -> Type where
   CanExtractMeta : ValidTransition Initial ExtractMetadata (MetadataExtracted meta)
   CanDetectLayout : ValidTransition (MetadataExtracted meta) DetectLayout (LayoutDetected layout meta)
-  CanExtractContent : ValidTransition (LayoutDetected layout meta) ExtractProblems (ContentExtracted result layout meta)
+  CanRunOCR : ValidTransition (LayoutDetected layout meta) RunOCR (OcrCompleted ocrResults layout meta)
+  CanExtractContent : ValidTransition (OcrCompleted ocrResults layout meta) ExtractProblems (ContentExtracted result layout meta)
   CanGenerateOutput : ValidTransition (ContentExtracted result layout meta) GenerateOutput (OutputGenerated pkg)
   CanFail : ValidTransition state step (Failed msg)
 
@@ -71,6 +75,7 @@ expectedSteps : List WorkflowStep
 expectedSteps = [
   ExtractMetadata,
   DetectLayout,
+  RunOCR,              -- NEW: OCR step added
   ExtractProblems,
   ExtractSolutions,
   PairProblemsSolutions,

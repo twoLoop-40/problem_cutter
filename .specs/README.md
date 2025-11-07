@@ -1,174 +1,116 @@
-# Idris2 Type Specifications
+# Idris2 명세 (Formal Specifications)
 
-This directory contains the formal type specifications for the PDF Problem Cutter project.
+이 디렉토리는 PDF 문제 추출 시스템의 Idris2 형식 명세를 포함합니다.
 
-## 📋 Files Overview
-
-| File | Purpose | Status | Lines |
-|------|---------|--------|-------|
-| `Base.idr` | Basic types (Coord, BBox, VLine, proofs) | ✅ Compiles | ~110 |
-| `PdfMetadata.idr` | PDF metadata types (Subject, ExamType, etc.) | ✅ Compiles | ~90 |
-| `LayoutDetection.idr` | Layout detection (columns, boundaries) | ✅ Compiles | ~135 |
-| `ProblemExtraction.idr` | Problem/solution extraction | ✅ Compiles | ~170 |
-| `OutputFormat.idr` | Output file format specification | ✅ Compiles | ~150 |
-| `Workflow.idr` | Complete workflow state machine | ✅ Compiles | ~80 |
-
-**Total**: 6 modules, ~735 lines of specifications
-
-## 🔍 Module Dependencies
+## 구조
 
 ```
-Base.idr (foundational)
-  ↓
-  ├─→ PdfMetadata.idr
-  ├─→ LayoutDetection.idr
-  │     ↓
-  │     └─→ ProblemExtraction.idr
-  │           ↓
-  │           ├─→ OutputFormat.idr
-  │           └─→ Workflow.idr
-  └─→ Workflow.idr
+.specs/
+├── System/     # 범용 시스템 명세 (재사용 가능)
+└── Samples/    # 샘플 PDF별 구체적 명세 (검증용)
 ```
 
-## ✅ Compilation Verification
+## System 명세 (범용)
 
-All specifications compile successfully:
+**목적**: 어떤 PDF에도 적용 가능한 범용 타입 시스템
+
+| 파일 | 설명 |
+|------|------|
+| `Base.idr` | 기본 타입 (Coord, BBox, VLine) |
+| `PdfMetadata.idr` | 메타데이터 타입 (Subject, ExamType, etc.) |
+| `LayoutDetection.idr` | 레이아웃 감지 (단 구분) |
+| `OcrEngine.idr` | OCR 통합 (Tesseract/EasyOCR) |
+| `ProblemExtraction.idr` | 문제/정답 추출 |
+| `OutputFormat.idr` | 출력 형식 (1_prb, 1_sol, ZIP) |
+| `Workflow.idr` | 전체 워크플로우 |
+
+**특징**:
+- PDF 파일 경로를 파라미터로 받음
+- 특정 샘플에 종속되지 않음
+- 증명 타입으로 속성 보장 (NoOverlap, ValidLayout, etc.)
+
+## Samples 명세 (검증용)
+
+**목적**: 특정 샘플 PDF의 구조를 명세로 작성하여 검증
+
+예시:
+```idris
+-- Samples/SampleA.idr
+sampleA_PdfPath : String
+sampleA_ExpectedLayout : PageLayout
+sampleA_ExpectedProblems : List ProblemNum
+
+-- 추출 결과가 예상과 일치하는지 증명
+ValidSampleA : ExtractionResult -> Type
+```
+
+**용도**:
+- 단위 테스트
+- 회귀 테스트
+- 시스템 명세 검증
+
+## 개발 원칙
+
+### Formal Spec Driven Development
+
+```
+1. Idris2 명세 작성/수정
+2. 명세 컴파일 검증 (idris2 --check)
+3. Python 코드 구현
+4. 실행 중 문제 발견 → 1번으로 돌아가기
+```
+
+**명세가 보장하는 것**:
+- 타입 안전성 (컴파일 타임 검증)
+- 속성 증명 (NoOverlap, AllContained, ValidLayout, etc.)
+- 일관성 (코드가 명세를 따름)
+
+### 명세 작성 가이드
+
+1. **System 명세는 범용적으로**
+   - PDF 파일을 파라미터로 받기
+   - 특정 샘플에 종속되지 않기
+   - 재사용 가능하게
+
+2. **Samples 명세는 구체적으로**
+   - 실제 PDF 구조 명시
+   - 예상 결과 정의
+   - 검증용 증명 타입
+
+3. **증명 타입 활용**
+   - 중요한 속성은 타입으로 표현
+   - 컴파일러가 검증하도록
+
+## 컴파일 방법
 
 ```bash
-idris2 --check Base.idr               # ✅ OK
-idris2 --check PdfMetadata.idr        # ✅ OK
-idris2 --check LayoutDetection.idr    # ✅ OK
-idris2 --check ProblemExtraction.idr  # ✅ OK
-idris2 --check OutputFormat.idr       # ✅ OK
-idris2 --check Workflow.idr           # ✅ OK
+# System 명세 컴파일
+cd .specs/System
+idris2 --check Base.idr
+idris2 --check LayoutDetection.idr
+idris2 --check ProblemExtraction.idr
+# ... 모든 파일
+
+# 또는 전체 체크
+idris2 --check Workflow.idr  # 다른 모듈들을 import하므로 함께 검증됨
 ```
 
-## 🎯 Key Proof Types
+## Python 구현과의 관계
 
-### Base.idr
-- `NoOverlap : List BBox -> Type` - Bounding boxes don't overlap
-- `AllContained : BBox -> List BBox -> Type` - All boxes contained in parent
-- `NotOverlapping : BBox -> BBox -> Type` - Two boxes don't overlap
-
-### LayoutDetection.idr
-- `IsValidBound : ColumnBound -> Type` - Column bound is valid (left < right)
-- `ValidColumnBounds : ColumnCount -> List ColumnBound -> Type` - Correct number of columns
-- `NonOverlappingColumns : List ColumnBound -> Type` - Columns don't overlap
-- `ValidLayout : PageLayout -> Type` - Complete layout validation
-
-### ProblemExtraction.idr
-- `ValidProblem : ProblemItem -> Type` - Problem has valid structure
-- `ValidSolution : SolutionItem -> Type` - Solution has valid structure
-- `ProblemsInOrder : List ProblemItem -> Type` - Problems are sorted
-
-### OutputFormat.idr
-- `DifferentFilenames : OutputFile -> OutputFile -> Type` - Files have different names
-- `UniqueFilenames : List OutputFile -> Type` - All filenames are unique
-- `ValidOutput : OutputPackage -> Type` - Output package is valid
-- `CompleteOutput : ExtractionResult -> List OutputFile -> Type` - All problems/solutions have files
-
-### Workflow.idr
-- `ValidTransition : WorkflowState -> WorkflowStep -> WorkflowState -> Type` - State transitions are valid
-- `ValidWorkflow : WorkflowExecution -> Type` - Workflow execution is valid
-
-## 📖 Reading Guide
-
-### Understanding Idris2 Syntax
-
-1. **Data Types** - Define structure
-```idris
-data ColumnCount = OneColumn | TwoColumn | ThreeColumn
+```
+Idris2 명세 (.specs/)       Python 구현 (core/)
+├── Base.idr         →      base.py
+├── LayoutDetection  →      layout_detector.py
+├── ProblemExtraction →     problem_extractor.py (작성 예정)
+└── OcrEngine        →      ocr_engine.py (작성 예정)
 ```
 
-2. **Records** - Product types with named fields
-```idris
-record BBox where
-  constructor MkBBox
-  topLeft : Coord
-  width : Nat
-  height : Nat
-```
+**규칙**:
+- Python 코드는 Idris2 명세를 따라 구현
+- 타입 이름, 함수 시그니처 최대한 일치
+- 명세에 정의된 증명을 런타임 검증으로 구현
 
-3. **Dependent Types** - Types that depend on values
-```idris
-data NoOverlap : List BBox -> Type where
-  NoOverlapNil : NoOverlap []
-  NoOverlapOne : (box : BBox) -> NoOverlap [box]
-```
+## 참고
 
-4. **Proof Construction** - Building evidence
-```idris
-data ValidLayout : PageLayout -> Type where
-  MkValidLayout : (layout : PageLayout) ->
-                  ValidColumnBounds layout.columnCount layout.columns ->
-                  NonOverlappingColumns layout.columns ->
-                  ValidLayout layout
-```
-
-## 🔧 Implementation Guide
-
-When implementing in Python, maintain these type invariants:
-
-### Base Types
-```python
-@dataclass
-class Coord:
-    x: int  # Nat in Idris2
-    y: int  # Nat in Idris2
-
-@dataclass
-class BBox:
-    top_left: Coord
-    width: int
-    height: int
-```
-
-### Proofs as Runtime Checks
-```python
-def check_no_overlap(boxes: list[BBox]) -> bool:
-    """Runtime check for NoOverlap proof"""
-    for i, b1 in enumerate(boxes):
-        for b2 in boxes[i+1:]:
-            if overlaps(b1, b2):
-                return False
-    return True
-```
-
-### State Machines
-```python
-class WorkflowState(Enum):
-    INITIAL = "initial"
-    METADATA_EXTRACTED = "metadata_extracted"
-    LAYOUT_DETECTED = "layout_detected"
-    # ... follow Workflow.idr
-```
-
-## 🎓 Design Principles
-
-1. **Type Safety First** - If it compiles, it's structurally correct
-2. **Proof-Carrying Code** - Proofs document invariants
-3. **Separation of Concerns** - Each module has a single responsibility
-4. **Progressive Refinement** - Build complex types from simple ones
-
-## 🚀 Next Steps for Implementation
-
-1. **core/base.py** - Implement Base.idr types
-2. **core/metadata.py** - Implement PdfMetadata.idr
-3. **core/layout.py** - Implement LayoutDetection.idr
-4. **core/extraction.py** - Implement ProblemExtraction.idr
-5. **core/output.py** - Implement OutputFormat.idr
-6. **core/workflow.py** - Implement Workflow.idr
-
-## 📝 Notes
-
-- All functions marked `partial` need careful runtime handling
-- Functions without implementations are placeholders for Python
-- Proofs may be relaxed to runtime checks in Python
-- Follow the type signatures exactly for API compatibility
-
----
-
-**Specification Status**: Complete ✅  
-**Compilation Status**: All modules compile ✅  
-**Implementation Status**: Pending 🔨
-
+- [Idris2 공식 문서](https://idris2.readthedocs.io/)
+- System 디렉토리의 README.md: 각 모듈 상세 설명

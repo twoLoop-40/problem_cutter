@@ -2,9 +2,9 @@
 |||
 ||| This module defines types for extracting and representing
 ||| metadata from exam PDFs (subject, school, exam type, etc.)
-module PdfMetadata
+module System.PdfMetadata
 
-import Base
+import System.Base
 
 %default total
 
