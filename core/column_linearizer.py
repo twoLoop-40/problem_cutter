@@ -268,8 +268,21 @@ def crop_region(
         end_y: End Y coordinate (exclusive)
 
     Returns:
-        Cropped image region
+        Cropped image region (empty array if invalid)
     """
+    # Validate coordinates
+    if start_y < 0 or end_y < 0 or start_y >= end_y:
+        print(f"Warning: Invalid crop region [{start_y}:{end_y}]")
+        return np.array([])  # Return empty array
+
+    # Clamp to image bounds
+    start_y = max(0, min(start_y, linearized.total_height))
+    end_y = max(0, min(end_y, linearized.total_height))
+
+    if start_y >= end_y:
+        print(f"Warning: Invalid crop region after clamping [{start_y}:{end_y}]")
+        return np.array([])
+
     return linearized.linearized_image[start_y:end_y, :]
 
 
@@ -283,6 +296,11 @@ def trim_whitespace(image: np.ndarray, threshold: int = 250) -> np.ndarray:
     Returns:
         Trimmed image
     """
+    # Handle empty or invalid images
+    if image is None or image.size == 0:
+        print("Warning: Empty image passed to trim_whitespace")
+        return image
+
     # Convert to grayscale if needed
     if len(image.shape) == 3:
         gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)

@@ -132,10 +132,11 @@ def detect_markers_in_linearized(
         if m.number not in unique_markers or m.confidence > unique_markers[m.number].confidence:
             unique_markers[m.number] = m
 
-    # Sort again by number
-    result = sorted(unique_markers.values(), key=lambda m: m.number)
+    # Sort by Y position (NOT by number!) - this is critical
+    # Problem boundaries must be calculated in vertical order
+    result = sorted(unique_markers.values(), key=lambda m: m.y_position)
 
-    print(f"\nDetected {len(result)} problem markers:")
+    print(f"\nDetected {len(result)} problem markers (sorted by Y position):")
     for m in result:
         print(f"  {m}")
 
