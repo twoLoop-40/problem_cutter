@@ -158,8 +158,9 @@ def linearize_columns(columns: List[np.ndarray], original_width: int, original_h
 
     Workflow:
     1. Take each column image
-    2. Stack vertically (top to bottom)
-    3. Create single long vertical strip
+    2. Pad columns to same width if needed
+    3. Stack vertically (top to bottom)
+    4. Create single long vertical strip
 
     This ensures:
     - All content preserved (no data loss)
@@ -177,11 +178,31 @@ def linearize_columns(columns: List[np.ndarray], original_width: int, original_h
     if not columns:
         raise ValueError("No columns to linearize")
 
-    # Store column info
+    # Store column info (before padding)
     column_info = [(col, col.shape[1], col.shape[0]) for col in columns]
 
+    # Find maximum width among columns
+    max_width = max(col.shape[1] for col in columns)
+
+    # Pad columns to same width if needed
+    padded_columns = []
+    for col in columns:
+        if col.shape[1] < max_width:
+            # Pad on the right side with white (255)
+            pad_width = max_width - col.shape[1]
+            if len(col.shape) == 3:
+                # Color image
+                padding = np.full((col.shape[0], pad_width, col.shape[2]), 255, dtype=col.dtype)
+            else:
+                # Grayscale image
+                padding = np.full((col.shape[0], pad_width), 255, dtype=col.dtype)
+            padded = np.hstack([col, padding])
+            padded_columns.append(padded)
+        else:
+            padded_columns.append(col)
+
     # Concatenate vertically
-    linearized = np.vstack(columns)
+    linearized = np.vstack(padded_columns)
     total_height = linearized.shape[0]
 
     return LinearizedContent(
