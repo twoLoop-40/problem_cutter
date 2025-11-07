@@ -84,10 +84,16 @@ def detect_column_layout(image: np.ndarray, layout_detector=None) -> ColumnLayou
 
     if layout_detector is not None:
         # Use existing layout detector
-        results = layout_detector.detect_layout(image)
-        if results.get("is_two_column", False):
-            mid = results.get("column_boundary", width // 2)
-            return ColumnLayout.two_columns(width, height, mid)
+        page_layout = layout_detector.detect_layout(image)
+        if page_layout.column_count.value == 2:  # TWO column
+            # Get the boundary between columns
+            if len(page_layout.columns) >= 2:
+                # Mid point between first and second column
+                col1 = page_layout.columns[0]
+                col2 = page_layout.columns[1]
+                mid = (col1.right_x + col2.left_x) // 2
+                return ColumnLayout.two_columns(width, height, mid)
+        # Fall through to default single column if not 2 columns
 
     # Fallback: analyze vertical projection to detect columns
     # Convert to grayscale if needed
