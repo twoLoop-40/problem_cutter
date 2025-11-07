@@ -361,31 +361,108 @@ def detect_problem_boundaries(strategy: BoundaryStrategy,
         # No markers found - cannot detect problems
         return []
 
+    # Sort markers by y position (top to bottom)
+    markers = sorted(markers, key=lambda m: m.position.y)
+
+    # Filter out solution markers (detected by decreasing problem numbers in same column)
+    # Example: Problem 7, then Problem 1 → the second "1" is likely in the solution section
+    filtered_markers = []
+    column_max_nums = {}  # Track max problem number seen in each column
+
+    for marker in markers:
+        marker_x = marker.position.x
+
+        # Find column
+        col_idx = -1
+        if layout.columns:
+            for idx, col in enumerate(layout.columns):
+                if col.left_x <= marker_x <= col.right_x:
+                    col_idx = idx
+                    break
+
+        # Check if problem number is decreasing in this column
+        max_num_in_col = column_max_nums.get(col_idx, 0)
+
+        if marker.marker_number > max_num_in_col:
+            # Normal ascending sequence - this is a problem marker
+            filtered_markers.append(marker)
+            column_max_nums[col_idx] = marker.marker_number
+        else:
+            # Decreasing or duplicate - likely solution marker, skip
+            print(f"   ⚠ Skipping marker {marker.marker_number} @ y={marker.position.y}: "
+                  f"appears after problem {max_num_in_col} in same column (likely solution)")
+
+    markers = filtered_markers
+
+    if not markers:
+        return []
+
     boundaries = []
     page_height = layout.page_height
     page_width = layout.page_width
 
     for i, marker in enumerate(markers):
         problem_num = marker.marker_number
-        start_y = marker.position.y
+        marker_y = marker.position.y
 
         # Find which column this marker belongs to
         marker_x = marker.position.x
         column_x_start = 0
         column_x_end = page_width
+        current_column = None
 
         if layout.columns:
             for col in layout.columns:
                 if col.left_x <= marker_x <= col.right_x:
                     column_x_start = col.left_x
                     column_x_end = col.right_x
+                    current_column = col
                     break
 
-        # Find end position (next marker or page end)
-        if i + 1 < len(markers):
-            end_y = markers[i + 1].position.y
+        # Strategy: Problem N area = from problem N marker to problem N+1 marker
+        # For the first problem in a column, start from top (0 or previous column's end)
+        # This includes content between markers (full problem content)
+
+        # Start position: current marker position
+        start_y = marker_y
+
+        # BUT: if this is the first problem in the column,
+        # include content from top of column (or previous problem's end)
+        if i == 0:
+            # Very first marker - start from page top
+            start_y = 0
         else:
-            end_y = page_height
+            # Check if there's a previous marker in the same column
+            has_prev_in_column = False
+            for prev_marker in reversed(markers[:i]):
+                prev_x = prev_marker.position.x
+                if current_column is not None:
+                    if current_column.left_x <= prev_x <= current_column.right_x:
+                        has_prev_in_column = True
+                        break
+                else:
+                    has_prev_in_column = True
+                    break
+
+            if not has_prev_in_column:
+                # First marker in this column - start from column top
+                start_y = 0
+
+        # Find end position: next marker IN THE SAME COLUMN or page end
+        end_y = page_height
+
+        # Look for next marker in the same column
+        for next_marker in markers[i + 1:]:
+            next_x = next_marker.position.x
+            # Check if next marker is in the same column
+            if current_column is not None:
+                if current_column.left_x <= next_x <= current_column.right_x:
+                    end_y = next_marker.position.y
+                    break
+            else:
+                # No column info, just use next marker
+                end_y = next_marker.position.y
+                break
 
         # Adjust using nearby gaps (if available)
         if gaps:
