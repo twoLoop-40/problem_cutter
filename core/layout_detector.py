@@ -394,8 +394,129 @@ class LayoutDetector:
         
         cv2.putText(vis, method_text, (10, 30), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
-        cv2.putText(vis, col_text, (10, 60), 
+        cv2.putText(vis, col_text, (10, 60),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
-        
+
         return vis
+
+
+# -------------------------------------------------------------------------
+# Narrow column merging (to handle thick separator lines)
+# Implements: LayoutDetection.idr:139-203
+# -------------------------------------------------------------------------
+
+def column_width(col: ColumnBound) -> int:
+    """Calculate column width"""
+    return col.right_x - col.left_x
+
+
+def is_narrow_column(threshold: int, col: ColumnBound) -> bool:
+    """
+    Check if a column is narrower than threshold
+
+    Narrow columns (< 100px typically) are likely separator lines,
+    not actual content columns
+    """
+    return column_width(col) < threshold
+
+
+def filter_narrow_columns(min_width: int, columns: List[ColumnBound]) -> List[ColumnBound]:
+    """
+    Filter out columns narrower than threshold
+
+    Returns only content columns, removing separator regions
+
+    Args:
+        min_width: Minimum column width (typically 100px)
+        columns: List of all column boundaries
+
+    Returns:
+        Filtered list of content columns only
+    """
+    return [col for col in columns if not is_narrow_column(min_width, col)]
+
+
+def check_all_wide_enough(min_width: int, columns: List[ColumnBound]) -> bool:
+    """
+    Check if all columns are wide enough
+
+    Implements: AllWideEnough proof type
+    """
+    return all(column_width(col) >= min_width for col in columns)
+
+
+def mk_layout_from_merged_lines(width: int,
+                                height: int,
+                                vlines: List[VLine],
+                                merge_threshold: int = 20,
+                                min_width: int = 100) -> PageLayout:
+    """
+    Create layout from merged lines
+
+    This is the recommended way to create layouts:
+    1. Merge nearby lines (thick separators)
+    2. Create column boundaries
+    3. Filter out narrow "columns" (actual separators)
+    4. Determine final column count
+
+    Args:
+        width: Page width
+        height: Page height
+        vlines: Detected vertical lines
+        merge_threshold: Max distance to merge lines (default 20px)
+        min_width: Min column width to keep (default 100px)
+
+    Returns:
+        PageLayout with correctly merged columns
+    """
+    detector = LayoutDetector()
+
+    # Step 1: Merge nearby lines
+    merged_lines = detector._merge_nearby_vlines(vlines, threshold=merge_threshold)
+
+    # Step 2: Create initial column boundaries
+    if not merged_lines:
+        # No lines → single column
+        return PageLayout(
+            width, height,
+            ColumnCount.ONE,
+            DetectionMethod.VERTICAL_LINES,
+            [],
+            [ColumnBound(0, width)]
+        )
+
+    # Sort lines by x
+    merged_lines = sorted(merged_lines, key=lambda vl: vl.x)
+
+    # Create boundaries between (0, line1, line2, ..., width)
+    x_positions = [0] + [vl.x for vl in merged_lines] + [width]
+    all_columns = []
+    for i in range(len(x_positions) - 1):
+        all_columns.append(ColumnBound(x_positions[i], x_positions[i+1]))
+
+    # Step 3: Filter out narrow columns (separators)
+    content_columns = filter_narrow_columns(min_width, all_columns)
+
+    # Step 4: Fallback if no content columns found
+    if not content_columns:
+        # If filtering removed all columns, use original columns
+        # This happens when all gaps are narrow (thick separators only)
+        content_columns = all_columns
+
+    # Step 5: Determine column count
+    num_cols = len(content_columns)
+    if num_cols == 1:
+        col_count = ColumnCount.ONE
+    elif num_cols == 2:
+        col_count = ColumnCount.TWO
+    else:
+        col_count = ColumnCount.THREE
+
+    return PageLayout(
+        width, height,
+        col_count,
+        DetectionMethod.VERTICAL_LINES,
+        merged_lines,
+        content_columns
+    )
 
