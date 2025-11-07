@@ -47,10 +47,16 @@ htmlcov/
 # Jupyter
 .ipynb_checkpoints
 
-# Output files
-output/
-*.jpg
-*.png
+# Output files (exclude test results)
+output/*
+!output/layout_results/
+output/layout_results/*.jpg
+output/layout_results/*.png
+
+# But track sample test results metadata
+!output/layout_results/.gitkeep
+
+# Ignore other generated files
 *.pdf
 !samples/*.pdf
 
