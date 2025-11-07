@@ -98,49 +98,75 @@ def detect_markers_in_linearized(
 ) -> List[ProblemMarker]:
     """Detect problem markers in linearized content using OCR
 
+    Strategy: Find consecutive number pairs (n, n+1) to avoid false positives
+    - "1." followed by "2." → Problem 1 confirmed
+    - "2." followed by "3." → Problem 2 confirmed
+    - Last number → extends to end of content
+
     Args:
         linearized: Linearized content
         lang: OCR language (default "kor+eng")
 
     Returns:
-        List of detected problem markers (sorted by y_position)
+        List of validated problem markers (sorted by y_position)
     """
     # Run OCR on linearized image
     ocr_results = run_tesseract_ocr(linearized.linearized_image, lang)
 
-    # Extract problem markers
-    markers = []
+    # Extract ALL potential markers
+    all_markers = []
     for result in ocr_results:
-        # Parse problem number from text
         text = result.text
         number = parse_problem_number(text)
 
         if number is not None:
-            # Get Y position (use top of bounding box)
             y_pos = result.bbox.top_left.y
-            # Extract confidence value
             conf = result.confidence.value if hasattr(result.confidence, 'value') else result.confidence
+            all_markers.append(ProblemMarker(number, y_pos, conf))
 
-            markers.append(ProblemMarker(number, y_pos, conf))
+    # Sort by y_position
+    all_markers.sort(key=lambda m: m.y_position)
 
-    # Sort by y_position (top to bottom)
-    markers.sort(key=lambda m: m.y_position)
+    # Remove duplicates within same number (keep highest confidence)
+    unique_by_number = {}
+    for m in all_markers:
+        if m.number not in unique_by_number or m.confidence > unique_by_number[m.number].confidence:
+            unique_by_number[m.number] = m
 
-    # Remove duplicates (keep highest confidence)
-    unique_markers = {}
-    for m in markers:
-        if m.number not in unique_markers or m.confidence > unique_markers[m.number].confidence:
-            unique_markers[m.number] = m
+    # Sort by Y position again
+    candidates = sorted(unique_by_number.values(), key=lambda m: m.y_position)
 
-    # Sort by Y position (NOT by number!) - this is critical
-    # Problem boundaries must be calculated in vertical order
-    result = sorted(unique_markers.values(), key=lambda m: m.y_position)
-
-    print(f"\nDetected {len(result)} problem markers (sorted by Y position):")
-    for m in result:
+    print(f"\nFound {len(candidates)} candidate markers:")
+    for m in candidates:
         print(f"  {m}")
 
-    return result
+    # Find consecutive pairs: (n, n+1)
+    # Strategy: Find all pairs, then extract unique markers
+    validated_set = set()
+
+    for i in range(len(candidates) - 1):
+        current = candidates[i]
+        next_marker = candidates[i + 1]
+
+        if next_marker.number == current.number + 1:
+            # Consecutive pair found!
+            validated_set.add(current.number)
+            validated_set.add(next_marker.number)
+            print(f"  ✅ Pair found: {current.number} → {next_marker.number}")
+
+    # If no pairs found but we have candidates, validate the single marker
+    if not validated_set and len(candidates) == 1:
+        validated_set.add(candidates[0].number)
+        print(f"  ✅ Single marker: {candidates[0].number}")
+
+    # Build final list with validated markers only
+    validated = [m for m in candidates if m.number in validated_set]
+
+    print(f"\n✅ Validated {len(validated)} problem markers:")
+    for m in validated:
+        print(f"  {m}")
+
+    return validated
 
 
 def detect_shared_passages(
