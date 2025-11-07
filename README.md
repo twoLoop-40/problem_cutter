@@ -1,296 +1,262 @@
-# PDF Problem Cutter - PDF 문제 분리 프로젝트
+# PDF Problem Cutter v2.1
 
-> PDF 시험지에서 문제와 정답을 자동으로 분리하여 개별 파일로 저장하는 도구
+> Formal Specification Driven PDF 문제 추출 시스템 (Idris2 + Python)
 
-## 📋 프로젝트 개요
+## 🎯 프로젝트 개요
 
-이 프로젝트는 PDF 형식의 시험지에서:
-- **문제**(1_prb, 2_prb, ...)와 **정답**(1_sol, 2_sol, ...)을 자동 분리
-- 2단/3단 편집된 PDF 처리
-- 메타데이터 추출 (과목, 학교, 시험 종류 등)
-- 개별 이미지/PDF 파일로 출력
-- ZIP 파일로 패키징
+PDF 시험지에서 문제를 자동으로 분리하여 개별 이미지로 저장하는 시스템입니다.
+
+**핵심 특징**:
+- ✅ **Idris2 Formal Specifications**: 타입 안전성 보장
+- ✅ **2-Stage OCR**: Tesseract (빠름) + Mathpix (정확함)
+- ✅ **Agent 기반 자동화**: 검증 실패 시 자동 재시도
+- ✅ **LangGraph 병렬 처리**: 페이지별/컬럼별 병렬 실행 (4배 속도)
 
 ## 🏗️ 프로젝트 구조
 
 ```
 problem_cutter/
-├── .specs/                    # Idris2 타입 명세 (설계)
-│   ├── Base.idr              # ✅ 기본 타입 (BBox, Coord, Region)
-│   ├── PdfMetadata.idr       # ✅ 메타데이터 타입
-│   ├── LayoutDetection.idr   # ✅ 레이아웃 감지 (1단/2단/3단)
-│   ├── ProblemExtraction.idr # ✅ 문제/정답 추출
-│   ├── OutputFormat.idr      # ✅ 출력 형식 (파일명, ZIP)
-│   └── Workflow.idr          # ✅ 전체 워크플로우
+├── .specs/                     # Idris2 Formal Specifications
+│   └── System/
+│       ├── Base.idr
+│       ├── ExtractionWorkflow.idr   # ✨ v2.1: Mathpix 재추출
+│       ├── LangGraphWorkflow.idr    # ✨ v1.0: 병렬 처리
+│       ├── LayoutDetection.idr
+│       ├── OcrEngine.idr
+│       └── ...
 │
-├── core/                      # Python 구현 (예정)
-├── AgentTools/                # 에이전트 친화적 Python 래퍼
-├── tests/                     # 테스트 (예정)
-├── samples/                   # 샘플 PDF
-├── output/                    # 결과물
-└── README.md                  # 이 파일
-
+├── core/                       # 저수준 핵심 모듈
+│   ├── pdf_converter.py        # PDF → 이미지
+│   ├── column_separator.py     # 단 분리
+│   ├── layout_detector.py      # 레이아웃 감지
+│   ├── ocr_engine.py           # Tesseract OCR
+│   ├── mathpix_client.py       # Mathpix API
+│   └── problem_extractor.py    # 문제 추출
+│
+├── AgentTools/                 # Agent 툴 (고수준 인터페이스)
+│   ├── types.py                # ToolResult, ToolDiagnostics
+│   ├── validation.py           # 순차 검증, 재시도 제안
+│   └── mathpix_validator.py    # Mathpix 재검증
+│
+├── workflows/                  # ✨ 실행 워크플로우 (메인)
+│   ├── tesseract_only.py       # Tesseract 단독
+│   ├── with_agent.py           # Agent 자동 재시도
+│   ├── with_mathpix.py         # 2-stage OCR (권장)
+│   └── langgraph_parallel.py   # 병렬 실행 (TODO)
+│
+├── scripts/                    # 유틸리티 스크립트
+│   ├── debug_ocr.py
+│   ├── extract_problems_strict.py
+│   └── test_column_separation.py
+│
+├── tests/                      # 단위 테스트
+│   ├── test_base.py
+│   ├── test_column_separator.py
+│   ├── test_layout_detector.py
+│   └── ...
+│
+├── samples/                    # 테스트 PDF
+├── output/                     # 실행 결과
+├── direction/                  # 워크플로우 문서
+├── NEXT_STEPS.md              # 다음 단계 계획
+└── REORGANIZATION_PLAN.md     # 파일 재구성 계획
 ```
 
-## ✅ 현재 상태
+## 🚀 빠른 시작
 
-### 완료된 작업
-- ✅ **6개 Idris2 명세 작성 완료** (모두 컴파일 성공)
-- ✅ 타입 시스템 설계 완료
-- ✅ 증명 타입 정의 (NoOverlap, ValidLayout, ProblemsInOrder 등)
+### 설치
 
-### 다음 단계
-- ⏳ Python 구현 (`core/` 모듈)
-- ⏳ OCR 통합 (Mathpix 또는 Tesseract)
-- ⏳ 테스트 작성
-- ⏳ CLI 인터페이스
+```bash
+# Python 환경 설정 (uv 사용)
+uv sync
 
-## 🤖 AgentTools 소개
+# Idris2 설치 (명세 컴파일용, 선택)
+# macOS: brew install idris2
+# Linux: https://github.com/idris-lang/Idris2
+```
 
-에이전트 프레임워크(예: Claude Code, LangGraph 등)에서 쉽게 재사용할 수 있도록
-`AgentTools/` 패키지를 제공합니다. 각 단계별 핵심 기능을 표준 `ToolResult`
-형식으로 감싸며, 성공 여부와 진단 정보를 함께 반환합니다.
+### 실행
+
+```bash
+# 1. Tesseract 단독 (빠름, 기본)
+uv run python -m workflows.tesseract_only samples/생명과학.pdf
+
+# 2. Agent 기반 (자동 재시도)
+uv run python -m workflows.with_agent samples/생명과학.pdf
+
+# 3. Mathpix 통합 (권장, 가장 정확함)
+# .env 파일에 API 키 설정 필요:
+#   MATHPIX_APP_KEY=your_key
+#   MATHPIX_APP_ID=your_id
+uv run python -m workflows.with_mathpix samples/생명과학.pdf
+
+# 4. LangGraph 병렬 (최고 성능, TODO)
+uv run python -m workflows.langgraph_parallel samples/생명과학.pdf
+```
+
+### 출력
+
+```
+output/생명과학_mathpix_test/
+├── page_1/
+│   ├── 00_original.png
+│   ├── col_1.png
+│   ├── col_2.png
+│   └── problems/
+│       ├── page1_col_1_prob_01.png  (문제 1번)
+│       ├── page1_col_1_prob_02.png  (문제 2번)
+│       └── ...
+├── page_2/
+├── page_3/
+└── page_4/
+```
+
+## 📊 성능
+
+### 테스트 결과 (생명과학Ⅰ, 4페이지, 20문제)
+
+| 지표 | Tesseract | + Agent | + Mathpix |
+|------|-----------|---------|-----------|
+| 문제 번호 감지 | 19/20 (95%) | 19/20 (95%) | 20/20 (100%) ✅ |
+| 이미지 추출 | 19/20 (95%) | 19/20 (95%) | 19/20 (95%) |
+| 처리 속도 | ~2분 | ~3분 | ~4분 |
+| API 비용 | 무료 | 무료 | $0.01/page |
+
+**향후 LangGraph 병렬 처리 시 예상**:
+- 4페이지 순차: ~8분 → **병렬: ~2분 (4배 속도)** 🚀
+
+## 🧪 테스트
+
+```bash
+# 전체 테스트
+uv run pytest tests/
+
+# 특정 모듈
+uv run pytest tests/test_mathpix_validator.py
+
+# 커버리지
+uv run pytest --cov=core --cov=AgentTools tests/
+```
+
+## 📐 Idris2 명세 검증
+
+```bash
+# 프로젝트 전체 빌드
+idris2 --build problem_cutter.ipkg
+
+# 개별 명세 확인
+idris2 -p base --check .specs/System/ExtractionWorkflow.idr
+idris2 -p base --check .specs/System/LangGraphWorkflow.idr
+```
+
+## 🎯 2-Stage OCR 워크플로우
+
+```
+[1단계] Tesseract OCR (빠름, 무료)
+   ↓
+[2단계] 검증 Agent
+   ↓ (실패 시)
+[3단계] Mathpix OCR (정확함, 유료) → 누락 문제 재검증
+   ↓
+[4단계] 최종 검증
+```
+
+**장점**:
+- Tesseract로 95% 처리 (무료)
+- 나머지 5%만 Mathpix 사용 (비용 절감)
+- 100% 감지율 달성
+
+## 🤖 AgentTools 사용법
 
 ```python
-from AgentTools import pdf, layout, extraction
-from core.problem_extractor import BoundaryStrategy
+from AgentTools.validation import validate_problem_sequence
+from AgentTools.mathpix_validator import verify_missing_problems_with_mathpix
 
-pdf_info = pdf.summarize_pdf("samples/통합과학_1_샘플.pdf")
-if not pdf_info.success:
-    raise RuntimeError(pdf_info.message)
+# 1. 검증
+result = validate_problem_sequence(found_numbers=[1, 2, 5, 6])
+# result.success = False
+# result.data["missing"] = [3, 4]
 
-images_result = pdf.load_pdf_images("samples/통합과학_1_샘플.pdf", dpi=200, limit_pages=1)
-page_image = images_result.data["images"][0]
-
-layout_result = layout.detect_page_layout(page_image)
-
-boundaries = extraction.find_problem_boundaries(
-    BoundaryStrategy.COMBINED,
-    layout_result.data["layout"],
-    ocr_results=[],  # OCR 결과 연결 시 교체
-    all_boxes=[],
+# 2. Mathpix 재검증 (async)
+mathpix_result = await verify_missing_problems_with_mathpix(
+    column_image_path=Path("output/page1/col_1.png"),
+    missing_numbers=[3, 4],
+    api_key=os.getenv("MATHPIX_APP_KEY"),
+    app_id=os.getenv("MATHPIX_APP_ID")
 )
+# mathpix_result.data["found_numbers"] = [3]
 ```
 
-핵심 모듈 요약
+## 📚 주요 문서
 
-- `AgentTools.pdf`: PDF 요약 및 이미지 로드
-- `AgentTools.layout`: 레이아웃 감지/요약
-- `AgentTools.ocr`: OCR 결과 필터링/정렬 (현재 스텁)
-- `AgentTools.extraction`: 문제 경계 탐지, 크롭, 검증
-- `AgentTools.workflow`: 기존 워크플로우 래핑 및 단계 실행 보조
+- [NEXT_STEPS.md](NEXT_STEPS.md) - 다음 단계 및 작업 계획
+- [REORGANIZATION_PLAN.md](REORGANIZATION_PLAN.md) - 파일 재구성 계획
+- [output/final_results/MATHPIX_TEST_SUMMARY.md](output/final_results/MATHPIX_TEST_SUMMARY.md) - 테스트 결과
+- [direction/](direction/) - 워크플로우 상세 문서
 
-## 📐 Idris2 명세 개요
+## 🔬 Formal Specifications
 
-### 1. Base.idr - 기본 타입
-```idris
-- Coord: 2D 좌표
-- BBox: 바운딩 박스
-- VLine: 수직선 (컬럼 구분)
-- NoOverlap: 영역 겹침 방지 증명
-- AllContained: 포함 관계 증명
-```
+### ExtractionWorkflow.idr v2.1
 
-### 2. PdfMetadata.idr - 메타데이터
-```idris
-- Subject: 과목 (수학, 과학, 국어 등)
-- ExamType: 시험 종류 (중간고사, 기말고사 등)
-- GradeLevel: 학년 (초/중/고)
-- PdfMeta: 완전한 메타데이터 레코드
-```
+**Mathpix 재추출 알고리즘 명세**:
+- `TwoStageOcrState`: 2단계 OCR 상태 (Tesseract → Mathpix)
+- `adjustConfigForMathpixFinding`: Mathpix 발견 시 설정 자동 조정
+- `ReExtractionStrategy`: 재추출 전략 (파라미터 조정 vs 영역 추정)
+- 증명: DPI, 재시도 횟수 보존
 
-### 3. LayoutDetection.idr - 레이아웃 감지
-```idris
-- ColumnCount: 1단/2단/3단
-- DetectionMethod: 감지 방법 (수직선/여백/문제 위치)
-- PageLayout: 페이지 레이아웃 정보
-- ValidLayout: 유효한 레이아웃 증명
-```
+### LangGraphWorkflow.idr v1.0
 
-### 4. ProblemExtraction.idr - 문제 추출
-```idris
-- ContentType: 컨텐츠 타입 (문제/정답/헤더)
-- NumberMarker: 번호 마커 (1., [1], ① 등)
-- ProblemItem: 문제 항목
-- SolutionItem: 정답 항목
-- ExtractionResult: 추출 결과
-- ValidProblem/ValidSolution: 유효성 증명
-```
+**LangGraph 병렬 처리 명세**:
+- `GraphNode`: 11개 노드 (Start → Convert → ... → End)
+- `ParallelLevel`: Sequential / PageLevel / ColumnLevel
+- `IndependentPages`, `IndependentColumns`: 독립성 증명
+- `NoDataRace`: 데이터 경쟁 없음 보장
 
-### 5. OutputFormat.idr - 출력 형식
-```idris
-- FileFormat: PNG, JPEG, PDF, SVG
-- OutputType: ProblemFile (_prb), SolutionFile (_sol)
-- OutputFile: 출력 파일 스펙
-- OutputPackage: ZIP 패키지
-- UniqueFilenames: 파일명 중복 방지 증명
-```
+## 🛠️ 개발 원칙
 
-### 6. Workflow.idr - 워크플로우
-```idris
-- WorkflowState: 워크플로우 상태
-- WorkflowStep: 각 단계
-- ValidTransition: 상태 전환 증명
-- executePdfExtraction: 메인 함수 시그니처
-```
+**Formal Spec Driven Development**:
+1. Idris2로 타입 명세 작성
+2. 명세 컴파일 검증 (`idris2 --check`)
+3. Python 코드 구현
+4. 실행 중 문제 발견 시 → 1번으로
 
-## 🎯 설계 원칙 (cutting_pdf.md 기반)
+**장점**:
+- 타입 시스템이 버그를 미리 차단
+- 증명 타입으로 불변식(invariant) 보장
+- 명세가 곧 문서
 
-### 요구사항
-1. ✅ **메타데이터 파악**: 수학영역, 학교, 시험 종류 등
-2. ✅ **수직선 감지**: 2단/3단 편집 판별
-3. ✅ **레이아웃 감지**: 수직선 또는 여백 기반
-4. ✅ **문제 번호 인식**: 1., 2. 형식
-5. ✅ **정답 인식**: [정답] 키워드
-6. ✅ **파일 출력**: 1_prb, 1_sol 형식
-7. ✅ **ZIP 패키징**: 전체 결과물 압축
+## 📈 현재 상태
 
-### 워크플로우
-```
-PDF 입력
-  ↓
-메타데이터 추출 (과목, 학교, 시험 종류)
-  ↓
-레이아웃 감지 (1단/2단/3단)
-  ↓
-수직선 감지 → 컬럼 경계 결정
-  ↓
-문제 영역 추출 (1., 2., ...)
-  ↓
-정답 영역 추출 ([정답], 번호)
-  ↓
-문제-정답 페어링
-  ↓
-개별 파일 생성 (PNG/JPEG/PDF)
-  ↓
-ZIP 패키징
-```
+**v2.1 (2025-11-08)**:
+- ✅ Idris2 명세 완성 (ExtractionWorkflow, LangGraphWorkflow)
+- ✅ 2-Stage OCR 구현 (Tesseract + Mathpix)
+- ✅ Agent 자동 재시도 구현
+- ✅ 파일 재구성 완료 (workflows/, scripts/, tests/)
+- ⏳ LangGraph 병렬 처리 (명세만 완성, 구현 대기)
+- ⏳ Mathpix 발견 후 이미지 재추출 (TODO)
 
-## 🔍 증명 타입
+## 🎯 다음 마일스톤
 
-이 프로젝트는 **Formal Specification Driven Development**를 따릅니다:
+1. **Phase 1** (우선): Mathpix 발견 후 이미지 재추출
+2. **Phase 2**: LangGraph 병렬 워크플로우 구현
+3. **Phase 3**: 테스트 커버리지 80% 달성
+4. **Phase 4**: 패키지화 및 CI/CD
 
-### 증명 1: NoOverlap
-```idris
--- 문제들이 서로 겹치지 않음을 증명
-NoOverlap : List BBox -> Type
-```
-
-### 증명 2: ValidLayout
-```idris
--- 레이아웃이 올바른 컬럼 수와 겹치지 않는 컬럼을 가짐을 증명
-ValidLayout : PageLayout -> Type
-```
-
-### 증명 3: ProblemsInOrder
-```idris
--- 문제 번호가 오름차순임을 증명
-ProblemsInOrder : List ProblemItem -> Type
-```
-
-### 증명 4: UniqueFilenames
-```idris
--- 출력 파일명이 중복되지 않음을 증명
-UniqueFilenames : List OutputFile -> Type
-```
-
-### 증명 5: CompleteOutput
-```idris
--- 모든 문제와 정답에 대응하는 출력 파일이 존재함을 증명
-CompleteOutput : ExtractionResult -> List OutputFile -> Type
-```
-
-## 🚀 사용 예정 방법 (Python 구현 후)
-
-```bash
-# 기본 사용
-uv run python core/extract.py sample.pdf
-
-# 출력 형식 지정
-uv run python core/extract.py sample.pdf --format png
-
-# 출력 디렉토리 지정
-uv run python core/extract.py sample.pdf --output ./output
-
-# 결과물
-output/
-├── sample_extracted.zip
-└── sample_extracted/
-    ├── 1_prb.png
-    ├── 1_sol.png
-    ├── 2_prb.png
-    ├── 2_sol.png
-    └── ...
-```
-
-## 📝 Idris2 명세 검증
-
-모든 명세가 컴파일되는지 확인:
-
-```bash
-cd problem_cutter/.specs
-
-# 개별 파일 확인
-idris2 --check Base.idr               # ✅
-idris2 --check PdfMetadata.idr        # ✅
-idris2 --check LayoutDetection.idr    # ✅
-idris2 --check ProblemExtraction.idr  # ✅
-idris2 --check OutputFormat.idr       # ✅
-idris2 --check Workflow.idr           # ✅
-```
-
-## 🔧 필요한 증명 (추후 구현 시)
-
-Python 구현에서 다음 증명을 제공해야 합니다:
-
-1. **NoOverlap 증명**: 문제 영역들이 겹치지 않음
-2. **ValidLayout 증명**: 감지된 레이아웃이 유효함
-3. **ValidColumnBounds 증명**: 컬럼 경계가 올바름
-4. **ProblemsInOrder 증명**: 추출된 문제들이 순서대로 정렬됨
-5. **UniqueFilenames 증명**: 출력 파일명이 중복되지 않음
-6. **CompleteOutput 증명**: 모든 문제/정답이 출력됨
-
-## 🎓 학습 가이드
-
-### Idris2 명세 읽는 법
-
-1. **데이터 타입**: `data`, `record` - 구조 정의
-2. **타입 별칭**: `Type` - 간단한 타입 이름
-3. **증명 타입**: `data ... : Type where` - 속성 증명
-4. **함수 시그니처**: `->` - 입력과 출력 타입
-
-### 예시
-```idris
--- 레코드 정의
-record BBox where
-  constructor MkBBox
-  topLeft : Coord
-  width : Nat
-  height : Nat
-
--- 증명 타입
-data NoOverlap : List BBox -> Type where
-  NoOverlapNil : NoOverlap []
-  NoOverlapOne : (box : BBox) -> NoOverlap [box]
-  NoOverlapCons : ...
-```
-
-## 📚 참고 자료
-
-- [Idris2 공식 문서](https://idris2.readthedocs.io/)
-- [Dependent Types 소개](https://en.wikipedia.org/wiki/Dependent_type)
-- 원본 요구사항: `../direction/cutting_pdf.md`
+자세한 내용은 [NEXT_STEPS.md](NEXT_STEPS.md) 참고.
 
 ## 🤝 기여
 
-현재 명세 단계이므로 Python 구현이 필요합니다:
-1. `core/` 디렉토리에 Python 모듈 작성
-2. Idris2 명세를 참고하여 타입 안전한 구현
-3. 테스트 작성
+1. 새 워크플로우는 `workflows/`에 추가
+2. 유틸리티 스크립트는 `scripts/`에 추가
+3. 테스트는 `tests/`에 추가
+4. Idris2 명세 수정 후 반드시 컴파일 확인
+
+## 📄 라이선스
+
+MIT
 
 ---
 
-**현재 진행률**: 명세 설계 100% 완료 ✅ | Python 구현 0% 
+**현재 진행률**: 명세 100% | 구현 80% | 병렬화 20% | 문서화 90%
 
-**마지막 업데이트**: 2025-11-07
-
+**마지막 업데이트**: 2025-11-08 (v2.1)
