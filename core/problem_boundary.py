@@ -224,13 +224,13 @@ def calculate_boundaries(
     boundaries = []
 
     for i, marker in enumerate(markers):
-        # Start Y: previous marker (or 0 if first)
+        # Start Y: 0 if first, otherwise current marker position
         if i == 0:
             start_y = 0
         else:
-            start_y = markers[i - 1].y_position
+            start_y = marker.y_position
 
-        # End Y: current marker (or next marker if not last)
+        # End Y: next marker position (or totalHeight if last)
         if i < len(markers) - 1:
             end_y = markers[i + 1].y_position
         else:
