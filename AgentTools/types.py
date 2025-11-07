@@ -10,10 +10,18 @@ from typing import Any, Dict, List, Optional
 class ToolDiagnostics:
     """툴 실행 시 수집되는 보조 진단 정보"""
 
+    info: List[str] = field(default_factory=list)
+    successes: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
     runtime_ms: Optional[float] = None
     extras: Dict[str, Any] = field(default_factory=dict)
+
+    def add_info(self, message: str) -> None:
+        self.info.append(message)
+
+    def add_success(self, message: str) -> None:
+        self.successes.append(message)
 
     def add_warning(self, message: str) -> None:
         self.warnings.append(message)
