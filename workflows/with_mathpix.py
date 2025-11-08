@@ -221,11 +221,12 @@ async def test_biology_with_mathpix():
                         if lines_json:
                             print(f"\n  [5-2단계] Mathpix 좌표로 직접 이미지 추출")
 
-                            # .lines.json에서 문제 마커 추출
+                            # .lines.json에서 문제 마커 추출 (스케일링 자동 적용)
                             markers = find_problem_markers_from_json(
                                 mathpix_json=lines_json,
                                 missing_numbers=found,
-                                page_num=1  # 컬럼 이미지는 단일 페이지
+                                page_num=1,  # 컬럼 이미지는 단일 페이지
+                                column_image=col.image  # 스케일링 계산용
                             )
 
                             if markers:

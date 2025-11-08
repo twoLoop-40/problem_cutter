@@ -100,20 +100,24 @@ def matches_problem_pattern(text: str) -> Optional[int]:
 def find_problem_markers_from_json(
     mathpix_json: Dict[str, Any],
     missing_numbers: List[int],
-    page_num: int = 1
+    page_num: int = 1,
+    column_image: Optional[np.ndarray] = None
 ) -> List[ProblemMarker]:
     """
-    Mathpix .lines.json에서 문제 번호 마커 찾기
+    Mathpix .lines.json에서 문제 번호 마커 찾기 + 좌표 스케일링
 
     명세: Implementation.findProblemMarkers
+
+    ⚠️ 중요: Mathpix 좌표는 원본 PDF 기준이므로 스케일링 필요!
 
     Args:
         mathpix_json: Mathpix .lines.json 데이터
         missing_numbers: 찾을 문제 번호 리스트
         page_num: 페이지 번호 (기본 1)
+        column_image: 컬럼 이미지 (스케일링 계산용)
 
     Returns:
-        발견된 ProblemMarker 리스트
+        발견된 ProblemMarker 리스트 (스케일링 적용됨)
     """
     markers = []
 
@@ -129,6 +133,19 @@ def find_problem_markers_from_json(
     if not target_page:
         return markers
 
+    # 스케일 팩터 계산
+    page_width = target_page.get('page_width', 0)
+    page_height = target_page.get('page_height', 0)
+
+    scale_x = 1.0
+    scale_y = 1.0
+
+    if column_image is not None and page_width > 0 and page_height > 0:
+        img_height, img_width = column_image.shape[:2]
+        scale_x = img_width / page_width
+        scale_y = img_height / page_height
+        print(f"  📐 좌표 스케일 팩터: X={scale_x:.4f}, Y={scale_y:.4f}")
+
     # 각 line 검사
     lines = target_page.get('lines', [])
 
@@ -142,12 +159,22 @@ def find_problem_markers_from_json(
             if not region:
                 continue
 
-            bbox = MathpixBBox.from_dict(region)
+            # 원본 좌표
+            orig_bbox = MathpixBBox.from_dict(region)
+
+            # 스케일링 적용
+            scaled_bbox = MathpixBBox(
+                top_left_x=int(orig_bbox.top_left_x * scale_x),
+                top_left_y=int(orig_bbox.top_left_y * scale_y),
+                width=int(orig_bbox.width * scale_x),
+                height=int(orig_bbox.height * scale_y)
+            )
+
             confidence = line.get('confidence', 0.0)
 
             marker = ProblemMarker(
                 number=problem_num,
-                bbox=bbox,
+                bbox=scaled_bbox,
                 confidence=confidence,
                 source="mathpix"
             )
