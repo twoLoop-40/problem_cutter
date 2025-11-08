@@ -88,9 +88,10 @@ async def verify_missing_problems_with_mathpix(
         diagnostics.add_info(f"임시 PDF 생성: {pdf_temp_path}")
 
         # 이미지 업로드 (PDF로 변환된 파일) - UploadRequest 객체 생성
+        # ⭐ .md와 .lines.json 둘 다 요청 (좌표 정보 필요)
         upload_request = UploadRequest(
             pdf_path=pdf_temp_path,
-            formats=[ConversionFormat.MD]
+            formats=[ConversionFormat.MD, ConversionFormat.LINES_JSON]
         )
         upload_response = await client.upload_pdf(upload_request)
 
@@ -140,11 +141,19 @@ async def verify_missing_problems_with_mathpix(
                 diagnostics=diagnostics
             )
 
-        # 결과 다운로드
+        # 결과 다운로드 (.md 텍스트)
         download_result = await client.download_result(pdf_id, ConversionFormat.MD)
 
         text_content = download_result.content
         diagnostics.add_info(f"Mathpix 텍스트 길이: {len(text_content)}자")
+
+        # ⭐ .lines.json도 다운로드 (좌표 정보)
+        try:
+            lines_json = await client.download_lines_json(pdf_id)
+            diagnostics.add_success("✓ .lines.json 다운로드 성공")
+        except Exception as e:
+            diagnostics.add_warning(f".lines.json 다운로드 실패: {str(e)}")
+            lines_json = None
 
         # 정규식으로 문제 번호 찾기
         found_problems = []
@@ -175,7 +184,10 @@ async def verify_missing_problems_with_mathpix(
             "found": found_problems,
             "found_numbers": found_numbers,
             "still_missing": still_missing,
-            "mathpix_text": text_content[:500]  # 처음 500자만
+            "mathpix_text": text_content[:500],  # 처음 500자만
+            "mathpix_full_text": text_content,  # ⭐ 전체 텍스트 추가 (디버깅용)
+            "mathpix_lines_json": lines_json,  # ⭐ 좌표 정보 JSON
+            "pdf_id": pdf_id  # ⭐ PDF ID (재다운로드용)
         }
 
         if found_numbers:
@@ -252,6 +264,76 @@ def extract_problem_regions_from_text(
         result[num] = problem_text
 
     return result
+
+
+def re_extract_problems_with_adjusted_params(
+    column_image: np.ndarray,
+    problem_numbers: List[int],
+    original_params: Dict[str, int]
+) -> List[Tuple[int, np.ndarray, Tuple[int, int, int, int]]]:
+    """Mathpix 발견 후 조정된 파라미터로 문제 재추출
+
+    Args:
+        column_image: 컬럼 이미지 (numpy array)
+        problem_numbers: Mathpix가 발견한 문제 번호들
+        original_params: 기존 파라미터 {"max_x_position": 300, "min_confidence": 50}
+
+    Returns:
+        추출된 문제들 리스트 [(번호, 이미지, bbox), ...]
+    """
+    # extract_problems_strict에서 함수들 import
+    smartocr_root = Path(__file__).parent.parent
+    sys.path.insert(0, str(smartocr_root))
+
+    from scripts.extract_problems_strict import (
+        detect_problem_numbers_strict,
+        extract_problems_by_markers
+    )
+
+    # 파라미터 조정 전략:
+    # 1. max_x_position 증가: 300 → 500 (더 오른쪽까지 검색)
+    # 2. min_confidence 감소: 50 → 30 (낮은 신뢰도도 허용)
+    adjusted_params = {
+        "max_x_position": original_params.get("max_x_position", 300) + 200,
+        "min_confidence": max(30, original_params.get("min_confidence", 50) - 20)
+    }
+
+    print(f"\n  📝 파라미터 조정: max_x={adjusted_params['max_x_position']}, "
+          f"min_conf={adjusted_params['min_confidence']}")
+
+    # Tesseract로 다시 문제 번호 감지
+    markers = detect_problem_numbers_strict(
+        column_image,
+        max_x_position=adjusted_params["max_x_position"]
+    )
+
+    if not markers:
+        print(f"  ⚠️ 조정된 파라미터로도 문제 번호 감지 실패")
+        return []
+
+    detected_numbers = [num for num, _, _ in markers]
+    print(f"  감지된 문제: {detected_numbers}")
+
+    # Mathpix가 발견한 번호와 교집합 찾기
+    found_in_both = list(set(problem_numbers) & set(detected_numbers))
+
+    if not found_in_both:
+        print(f"  ⚠️ Mathpix 발견 번호와 Tesseract 감지 번호 불일치")
+        print(f"     Mathpix: {problem_numbers}, Tesseract: {detected_numbers}")
+        return []
+
+    print(f"  ✓ 공통 발견: {found_in_both}")
+
+    # 문제 추출
+    problems = extract_problems_by_markers(column_image, markers)
+
+    # Mathpix가 발견한 번호만 필터링
+    filtered_problems = [
+        (num, img, bbox) for num, img, bbox in problems
+        if num in problem_numbers
+    ]
+
+    return filtered_problems
 
 
 if __name__ == "__main__":

@@ -29,13 +29,16 @@ sys.path.insert(0, str(project_root))
 
 from core.pdf_converter import pdf_to_images
 from core.column_separator import separate_columns
-from extract_problems_strict import (
+from scripts.extract_problems_strict import (
     detect_problem_numbers_strict,
     extract_problems_by_markers,
     trim_whitespace
 )
 from AgentTools.validation import validate_problem_sequence, suggest_retry_params
-from AgentTools.mathpix_validator import verify_missing_problems_with_mathpix
+from AgentTools.mathpix_validator import (
+    verify_missing_problems_with_mathpix,
+    re_extract_problems_with_adjusted_params
+)
 from PIL import Image
 
 
@@ -60,8 +63,8 @@ async def test_biology_with_mathpix():
         use_mathpix = True
 
     # 파일 경로
-    pdf_path = project_root / "samples" / "고3_과학탐구_생명과학Ⅰ_문항지.pdf"
-    output_base = project_root / "output" / "생명과학_mathpix_test"
+    pdf_path = project_root.parent / "samples" / "고3_과학탐구_생명과학Ⅰ_문항지.pdf"
+    output_base = project_root.parent / "output" / "생명과학_mathpix_test"
 
     if not pdf_path.exists():
         print(f"❌ 파일을 찾을 수 없습니다: {pdf_path}")
@@ -180,7 +183,7 @@ async def test_biology_with_mathpix():
 
             # [5단계] 두 번째 시도: Mathpix로 누락된 문제 재검증
             if use_mathpix and missing:
-                print(f"\n[5단계] Mathpix 재검증")
+                print(f"\n[5단계] Mathpix 재검증 + 이미지 재추출")
 
                 # 컬럼별로 Mathpix 실행
                 for col_idx, col in enumerate(result.columns, 1):
@@ -199,8 +202,44 @@ async def test_biology_with_mathpix():
                     if mathpix_result.success:
                         found = mathpix_result.data["found_numbers"]
                         print(f"  ✅ Mathpix 발견: {found}")
-                        page_problems.extend(found)
-                        mathpix_recoveries.extend(found)
+
+                        # Mathpix 텍스트 저장 (디버깅용)
+                        mathpix_text = mathpix_result.data.get("mathpix_full_text", "")
+                        if mathpix_text:
+                            mathpix_text_path = page_output / f"mathpix_{col_path.stem}.txt"
+                            mathpix_text_path.write_text(mathpix_text, encoding='utf-8')
+                            print(f"  📝 Mathpix 텍스트 저장: {mathpix_text_path.name}")
+
+                        # ⭐ 핵심: Mathpix가 발견한 문제 번호로 이미지 재추출
+                        print(f"\n  [5-2단계] Tesseract 파라미터 조정하여 이미지 재추출")
+
+                        re_extracted_problems = re_extract_problems_with_adjusted_params(
+                            column_image=col.image,
+                            problem_numbers=found,
+                            original_params=params
+                        )
+
+                        if re_extracted_problems:
+                            print(f"  ✓ 재추출 성공: {len(re_extracted_problems)}개")
+
+                            # 이미지 저장
+                            for num, prob_img, bbox in re_extracted_problems:
+                                prob_img = trim_whitespace(prob_img)
+                                filename = f"page{page_num}_col_{col_idx}_prob_{num:02d}.png"
+                                filepath = problems_output / filename
+                                Image.fromarray(prob_img).save(filepath)
+
+                                file_size = filepath.stat().st_size / 1024
+                                print(f"    ✓ 문제 {num}번: {prob_img.shape[1]}×{prob_img.shape[0]}px ({file_size:.1f}KB)")
+
+                            # page_problems에 추가
+                            page_problems.extend(found)
+                            mathpix_recoveries.extend(found)
+                        else:
+                            print(f"  ⚠️ 이미지 재추출 실패 (Tesseract가 여전히 감지 못함)")
+                            print(f"     번호만 기록: {found}")
+                            page_problems.extend(found)
+                            mathpix_recoveries.extend(found)
                     else:
                         print(f"  ❌ Mathpix: {mathpix_result.message}")
 
