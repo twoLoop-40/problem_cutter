@@ -217,46 +217,37 @@ async def test_biology_with_mathpix():
                             mathpix_text_path.write_text(mathpix_text, encoding='utf-8')
                             print(f"  📝 Mathpix 텍스트 저장: {mathpix_text_path.name}")
 
-                        # ⭐ 전략 1: Mathpix 좌표로 직접 추출 (NEW)
+                        # ⭐ 전략 1: Mathpix 좌표로 직접 추출 (통합 함수 사용)
                         if lines_json:
                             print(f"\n  [5-2단계] Mathpix 좌표로 직접 이미지 추출")
 
-                            # .lines.json에서 문제 마커 추출 (스케일링 자동 적용)
-                            markers = find_problem_markers_from_json(
+                            # ⭐ 개선된 통합 함수 사용 (일관된 스케일링 보장)
+                            from AgentTools.mathpix_coordinate import extract_problems_with_mathpix_coordinates
+
+                            extraction_result = extract_problems_with_mathpix_coordinates(
+                                column_image=col.image,
                                 mathpix_json=lines_json,
                                 missing_numbers=found,
-                                page_num=1,  # 컬럼 이미지는 단일 페이지
-                                column_image=col.image  # 스케일링 계산용
+                                page_num=1  # 컬럼 이미지는 단일 페이지
                             )
 
-                            if markers:
-                                print(f"  ✓ 좌표 발견: {len(markers)}개 마커")
+                            if extraction_result.success:
+                                extracted_items = extraction_result.data.get("extracted", [])
+                                print(f"  ✅ {extraction_result.message}")
 
                                 extracted_count = 0
-                                for marker in markers:
-                                    # 다음 마커 찾기 (영역 추정용)
-                                    next_marker = None
-                                    for m in markers:
-                                        if m.number > marker.number:
-                                            next_marker = m
-                                            break
-
-                                    # 좌표로 직접 추출
-                                    prob_img = extract_problem_by_coordinates(
-                                        column_image=col.image,
-                                        marker=marker,
-                                        next_marker=next_marker,
-                                        default_height=800
-                                    )
+                                for item in extracted_items:
+                                    prob_img = item["image"]
+                                    prob_num = item["number"]
 
                                     if prob_img is not None and prob_img.size > 0:
                                         prob_img = trim_whitespace(prob_img)
-                                        filename = f"page{page_num}_col_{col_idx}_prob_{marker.number:02d}.png"
+                                        filename = f"page{page_num}_col_{col_idx}_prob_{prob_num:02d}.png"
                                         filepath = problems_output / filename
                                         Image.fromarray(prob_img).save(filepath)
 
                                         file_size = filepath.stat().st_size / 1024
-                                        print(f"    ✓ 문제 {marker.number}번: {prob_img.shape[1]}×{prob_img.shape[0]}px ({file_size:.1f}KB)")
+                                        print(f"    ✓ 문제 {prob_num}번: {prob_img.shape[1]}×{prob_img.shape[0]}px ({file_size:.1f}KB)")
                                         extracted_count += 1
 
                                 if extracted_count > 0:
@@ -287,7 +278,7 @@ async def test_biology_with_mathpix():
                                         page_problems.extend(found)
                                         mathpix_recoveries.extend(found)
                             else:
-                                print(f"  ⚠️ .lines.json에서 좌표를 찾을 수 없음, Tesseract 재시도")
+                                print(f"  ⚠️ {extraction_result.message}")
                                 # Fallback: Tesseract 재시도
                                 re_extracted_problems = re_extract_problems_with_adjusted_params(
                                     column_image=col.image,
