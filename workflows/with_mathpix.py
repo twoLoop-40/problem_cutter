@@ -39,7 +39,12 @@ from AgentTools.mathpix_validator import (
     verify_missing_problems_with_mathpix,
     re_extract_problems_with_adjusted_params
 )
+from AgentTools.mathpix_coordinate import (
+    find_problem_markers_from_json,
+    extract_problem_by_coordinates
+)
 from PIL import Image
+import numpy as np
 
 
 async def test_biology_with_mathpix():
@@ -201,6 +206,8 @@ async def test_biology_with_mathpix():
 
                     if mathpix_result.success:
                         found = mathpix_result.data["found_numbers"]
+                        lines_json = mathpix_result.data.get("mathpix_lines_json")
+
                         print(f"  ✅ Mathpix 발견: {found}")
 
                         # Mathpix 텍스트 저장 (디버깅용)
@@ -210,36 +217,120 @@ async def test_biology_with_mathpix():
                             mathpix_text_path.write_text(mathpix_text, encoding='utf-8')
                             print(f"  📝 Mathpix 텍스트 저장: {mathpix_text_path.name}")
 
-                        # ⭐ 핵심: Mathpix가 발견한 문제 번호로 이미지 재추출
-                        print(f"\n  [5-2단계] Tesseract 파라미터 조정하여 이미지 재추출")
+                        # ⭐ 전략 1: Mathpix 좌표로 직접 추출 (NEW)
+                        if lines_json:
+                            print(f"\n  [5-2단계] Mathpix 좌표로 직접 이미지 추출")
 
-                        re_extracted_problems = re_extract_problems_with_adjusted_params(
-                            column_image=col.image,
-                            problem_numbers=found,
-                            original_params=params
-                        )
+                            # .lines.json에서 문제 마커 추출
+                            markers = find_problem_markers_from_json(
+                                mathpix_json=lines_json,
+                                missing_numbers=found,
+                                page_num=1  # 컬럼 이미지는 단일 페이지
+                            )
 
-                        if re_extracted_problems:
-                            print(f"  ✓ 재추출 성공: {len(re_extracted_problems)}개")
+                            if markers:
+                                print(f"  ✓ 좌표 발견: {len(markers)}개 마커")
 
-                            # 이미지 저장
-                            for num, prob_img, bbox in re_extracted_problems:
-                                prob_img = trim_whitespace(prob_img)
-                                filename = f"page{page_num}_col_{col_idx}_prob_{num:02d}.png"
-                                filepath = problems_output / filename
-                                Image.fromarray(prob_img).save(filepath)
+                                extracted_count = 0
+                                for marker in markers:
+                                    # 다음 마커 찾기 (영역 추정용)
+                                    next_marker = None
+                                    for m in markers:
+                                        if m.number > marker.number:
+                                            next_marker = m
+                                            break
 
-                                file_size = filepath.stat().st_size / 1024
-                                print(f"    ✓ 문제 {num}번: {prob_img.shape[1]}×{prob_img.shape[0]}px ({file_size:.1f}KB)")
+                                    # 좌표로 직접 추출
+                                    prob_img = extract_problem_by_coordinates(
+                                        column_image=col.image,
+                                        marker=marker,
+                                        next_marker=next_marker,
+                                        default_height=800
+                                    )
 
-                            # page_problems에 추가
-                            page_problems.extend(found)
-                            mathpix_recoveries.extend(found)
+                                    if prob_img is not None and prob_img.size > 0:
+                                        prob_img = trim_whitespace(prob_img)
+                                        filename = f"page{page_num}_col_{col_idx}_prob_{marker.number:02d}.png"
+                                        filepath = problems_output / filename
+                                        Image.fromarray(prob_img).save(filepath)
+
+                                        file_size = filepath.stat().st_size / 1024
+                                        print(f"    ✓ 문제 {marker.number}번: {prob_img.shape[1]}×{prob_img.shape[0]}px ({file_size:.1f}KB)")
+                                        extracted_count += 1
+
+                                if extracted_count > 0:
+                                    print(f"  ✅ 좌표 기반 추출 성공: {extracted_count}개")
+                                    page_problems.extend(found)
+                                    mathpix_recoveries.extend(found)
+                                else:
+                                    print(f"  ⚠️ 좌표 기반 추출 실패, Tesseract 파라미터 조정 시도")
+                                    # Fallback: Tesseract 재시도
+                                    re_extracted_problems = re_extract_problems_with_adjusted_params(
+                                        column_image=col.image,
+                                        problem_numbers=found,
+                                        original_params=params
+                                    )
+                                    if re_extracted_problems:
+                                        print(f"  ✓ Tesseract 재추출 성공: {len(re_extracted_problems)}개")
+                                        for num, prob_img, bbox in re_extracted_problems:
+                                            prob_img = trim_whitespace(prob_img)
+                                            filename = f"page{page_num}_col_{col_idx}_prob_{num:02d}.png"
+                                            filepath = problems_output / filename
+                                            Image.fromarray(prob_img).save(filepath)
+                                            file_size = filepath.stat().st_size / 1024
+                                            print(f"    ✓ 문제 {num}번: {prob_img.shape[1]}×{prob_img.shape[0]}px ({file_size:.1f}KB)")
+                                        page_problems.extend(found)
+                                        mathpix_recoveries.extend(found)
+                                    else:
+                                        print(f"  ⚠️ 번호만 기록: {found}")
+                                        page_problems.extend(found)
+                                        mathpix_recoveries.extend(found)
+                            else:
+                                print(f"  ⚠️ .lines.json에서 좌표를 찾을 수 없음, Tesseract 재시도")
+                                # Fallback: Tesseract 재시도
+                                re_extracted_problems = re_extract_problems_with_adjusted_params(
+                                    column_image=col.image,
+                                    problem_numbers=found,
+                                    original_params=params
+                                )
+                                if re_extracted_problems:
+                                    print(f"  ✓ Tesseract 재추출 성공: {len(re_extracted_problems)}개")
+                                    for num, prob_img, bbox in re_extracted_problems:
+                                        prob_img = trim_whitespace(prob_img)
+                                        filename = f"page{page_num}_col_{col_idx}_prob_{num:02d}.png"
+                                        filepath = problems_output / filename
+                                        Image.fromarray(prob_img).save(filepath)
+                                        file_size = filepath.stat().st_size / 1024
+                                        print(f"    ✓ 문제 {num}번: {prob_img.shape[1]}×{prob_img.shape[0]}px ({file_size:.1f}KB)")
+                                    page_problems.extend(found)
+                                    mathpix_recoveries.extend(found)
+                                else:
+                                    print(f"  ⚠️ 번호만 기록: {found}")
+                                    page_problems.extend(found)
+                                    mathpix_recoveries.extend(found)
                         else:
-                            print(f"  ⚠️ 이미지 재추출 실패 (Tesseract가 여전히 감지 못함)")
-                            print(f"     번호만 기록: {found}")
-                            page_problems.extend(found)
-                            mathpix_recoveries.extend(found)
+                            print(f"\n  [5-2단계] Tesseract 파라미터 조정하여 이미지 재추출")
+                            re_extracted_problems = re_extract_problems_with_adjusted_params(
+                                column_image=col.image,
+                                problem_numbers=found,
+                                original_params=params
+                            )
+                            if re_extracted_problems:
+                                print(f"  ✓ 재추출 성공: {len(re_extracted_problems)}개")
+                                for num, prob_img, bbox in re_extracted_problems:
+                                    prob_img = trim_whitespace(prob_img)
+                                    filename = f"page{page_num}_col_{col_idx}_prob_{num:02d}.png"
+                                    filepath = problems_output / filename
+                                    Image.fromarray(prob_img).save(filepath)
+                                    file_size = filepath.stat().st_size / 1024
+                                    print(f"    ✓ 문제 {num}번: {prob_img.shape[1]}×{prob_img.shape[0]}px ({file_size:.1f}KB)")
+                                page_problems.extend(found)
+                                mathpix_recoveries.extend(found)
+                            else:
+                                print(f"  ⚠️ 이미지 재추출 실패 (Tesseract가 여전히 감지 못함)")
+                                print(f"     번호만 기록: {found}")
+                                page_problems.extend(found)
+                                mathpix_recoveries.extend(found)
                     else:
                         print(f"  ❌ Mathpix: {mathpix_result.message}")
 

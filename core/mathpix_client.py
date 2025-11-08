@@ -348,6 +348,8 @@ class MathpixClient:
         """
         .lines.json 포맷 다운로드 및 파싱
 
+        ⚠️ 주의: .lines.json은 별도 엔드포인트입니다 (변환 포맷 아님)
+
         명세: MathpixCoordinateExtraction.Implementation.parseMathpixJson
 
         Returns:
@@ -375,12 +377,21 @@ class MathpixClient:
                 ]
             }
         """
-        result = await self.download_result(pdf_id, ConversionFormat.LINES_JSON)
+        # .lines.json은 별도 엔드포인트 (GET v3/pdf/{pdf_id}.lines.json)
+        url = f"{self.BASE_URL}/pdf/{pdf_id}.lines.json"
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=self.headers) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    raise Exception(f"Failed to download .lines.json: {resp.status} - {error_text}")
+
+                content_str = await resp.text()
 
         # JSON 파싱
         import json
         try:
-            lines_data = json.loads(result.content)
+            lines_data = json.loads(content_str)
             return lines_data
         except json.JSONDecodeError as e:
             raise Exception(f"Failed to parse .lines.json: {e}")

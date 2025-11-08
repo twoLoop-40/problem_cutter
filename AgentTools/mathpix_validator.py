@@ -85,10 +85,10 @@ async def verify_missing_problems_with_mathpix(
         diagnostics.add_info(f"임시 PDF 생성: {pdf_temp_path}")
 
         # 이미지 업로드 (PDF로 변환된 파일) - UploadRequest 객체 생성
-        # ⭐ .md와 .lines.json 둘 다 요청 (좌표 정보 필요)
+        # ⚠️ .lines.json은 별도 엔드포인트이므로 .md만 요청
         upload_request = UploadRequest(
             pdf_path=pdf_temp_path,
-            formats=[ConversionFormat.MD, ConversionFormat.LINES_JSON]
+            formats=[ConversionFormat.MD]
         )
         upload_response = await client.upload_pdf(upload_request)
 

@@ -257,19 +257,35 @@ emptyIsSorted = Refl
 public export
 data OcrEngine = Tesseract | Mathpix
 
-||| Mathpix 발견 정보
+||| Mathpix 바운딩 박스 (좌표 정보)
+public export
+record MathpixBBox where
+  constructor MkMathpixBBox
+  topLeftX : Nat
+  topLeftY : Nat
+  width : Nat
+  height : Nat
+
+||| MathpixBBox Eq 인스턴스
+public export
+Eq MathpixBBox where
+  (MkMathpixBBox x1 y1 w1 h1) == (MkMathpixBBox x2 y2 w2 h2) =
+    x1 == x2 && y1 == y2 && w1 == w2 && h1 == h2
+
+||| Mathpix 발견 정보 (.lines.json 기반)
 public export
 record MathpixFinding where
   constructor MkFinding
   problemNumber : Nat
-  textPosition : (Nat, Nat)  -- (x, y) 텍스트 좌표
+  bbox : MathpixBBox          -- ⭐ 바운딩 박스 좌표
+  confidence : Double         -- 신뢰도 (0.0~1.0)
   matchContext : String       -- 발견된 텍스트 주변 컨텍스트
 
 ||| MathpixFinding Eq 인스턴스
 public export
 Eq MathpixFinding where
-  (MkFinding n1 p1 c1) == (MkFinding n2 p2 c2) =
-    n1 == n2 && p1 == p2 && c1 == c2
+  (MkFinding n1 b1 c1 ctx1) == (MkFinding n2 b2 c2 ctx2) =
+    n1 == n2 && b1 == b2 && ctx1 == ctx2
 
 ||| 2단계 OCR 워크플로우 상태
 public export
@@ -302,39 +318,43 @@ data ValidOcrTransition : TwoStageOcrState -> TwoStageOcrState -> Type where
   -- 최종 검증 → 완료
   FinalValidationToCompleted : ValidOcrTransition FinalValidation OcrCompleted
 
-||| 재추출 전략
+||| 재추출 전략 (우선순위 순서)
 public export
 data ReExtractionStrategy : Type where
-  -- Tesseract 파라미터 조정 (Mathpix 발견 위치 기반)
+  -- 전략 1: Mathpix 좌표로 직접 추출 (가장 정확, 권장)
+  ExtractByCoordinates : MathpixFinding -> ReExtractionStrategy
+
+  -- 전략 2: Tesseract 파라미터 조정 (Mathpix 발견 위치 기반)
   AdjustTesseractParams : ExtractionConfig -> MathpixFinding -> ReExtractionStrategy
 
-  -- Mathpix 텍스트 위치로 이미지 영역 추정
+  -- 전략 3: Mathpix 텍스트 위치로 이미지 영역 추정 (fallback)
   EstimateRegionFromText : MathpixFinding -> ReExtractionStrategy
 
-  -- 수동 검수 필요
+  -- 전략 4: 수동 검수 필요 (최후의 수단)
   RequireManualReview : ReExtractionStrategy
 
-||| Mathpix 발견 후 Tesseract 설정 조정
+||| Mathpix 발견 후 Tesseract 설정 조정 (좌표 기반)
 public export
 adjustConfigForMathpixFinding : ExtractionConfig -> MathpixFinding -> ExtractionConfig
 adjustConfigForMathpixFinding config finding =
-  let (x, y) = finding.textPosition
+  let x = finding.bbox.topLeftX
+      y = finding.bbox.topLeftY
   in { maxXPosition := max config.maxXPosition (x + 100)
      , minConfidence := if config.minConfidence >= 40
                         then config.minConfidence `minus` 10
                         else config.minConfidence
      } config
 
-||| 재추출 전략 선택 (우선순위 기반)
+||| 재추출 전략 선택 (우선순위: 좌표 > 파라미터 조정 > 추정)
 public export
 chooseReExtractionStrategy : MathpixFinding -> ExtractionConfig -> ReExtractionStrategy
 chooseReExtractionStrategy finding config =
   -- 우선순위:
-  -- 1. Tesseract 파라미터 조정 (가장 빠르고 효율적)
-  -- 2. Mathpix 위치 기반 영역 추정
-  -- 3. 수동 검수
-  let adjustedConfig = adjustConfigForMathpixFinding config finding
-  in AdjustTesseractParams adjustedConfig finding
+  -- 1. Mathpix 좌표로 직접 추출 (가장 정확)
+  -- 2. Tesseract 파라미터 조정 (빠름)
+  -- 3. Mathpix 위치 기반 영역 추정 (fallback)
+  -- 4. 수동 검수
+  ExtractByCoordinates finding
 
 ||| Tesseract 결과와 Mathpix 결과 병합
 public export
@@ -415,15 +435,51 @@ planForSuccessfulExtraction =
 -- 예시: Mathpix Re-Extraction 워크플로우
 --------------------------------------------------------------------------------
 
-||| 예시: 문제 3번을 Mathpix로 발견한 경우
+--------------------------------------------------------------------------------
+-- 좌표 유효성 검증
+--------------------------------------------------------------------------------
+
+||| 바운딩 박스가 페이지 내부에 있는지 검사
+public export
+bboxInBounds : MathpixBBox -> Nat -> Nat -> Bool
+bboxInBounds bbox pageWidth pageHeight =
+  let x = bbox.topLeftX
+      y = bbox.topLeftY
+      w = bbox.width
+      h = bbox.height
+  in (x + w <= pageWidth) && (y + h <= pageHeight)
+
+||| 바운딩 박스가 유효함을 보장하는 타입
+public export
+data ValidBBox : MathpixBBox -> Nat -> Nat -> Type where
+  MkValidBBox :
+    (bbox : MathpixBBox) ->
+    (pageWidth : Nat) ->
+    (pageHeight : Nat) ->
+    {auto prf : bboxInBounds bbox pageWidth pageHeight = True} ->
+    ValidBBox bbox pageWidth pageHeight
+
+--------------------------------------------------------------------------------
+-- 예시: Mathpix 좌표 기반 추출
+--------------------------------------------------------------------------------
+
+||| 예시: 문제 3번을 Mathpix로 발견한 경우 (좌표 포함)
 example_finding_problem3 : MathpixFinding
-example_finding_problem3 = MkFinding 3 (280, 1500) "...문제 3. 다음 중..."
+example_finding_problem3 =
+  MkFinding 3
+            (MkMathpixBBox 245 2374 25 27)  -- x=245, y=2374, w=25, h=27
+            0.95
+            "3. 다음은 생명체..."
 
 ||| 예시: Mathpix 발견 후 설정 조정
 |||
 ||| 조정된 설정 값:
-||| - maxXPosition: max(300, 280+100) = 380
+||| - maxXPosition: max(300, 245+100) = 345
 ||| - minConfidence: 50 - 10 = 40
 ||| - dpi: 200 (보존됨, mathpixAdjustPreservesDpi 증명으로 보장)
 example_adjusted_config : ExtractionConfig
 example_adjusted_config = adjustConfigForMathpixFinding defaultConfig example_finding_problem3
+
+||| 예시: 재추출 전략 선택 → 좌표 기반 추출
+example_strategy : ReExtractionStrategy
+example_strategy = chooseReExtractionStrategy example_finding_problem3 defaultConfig
