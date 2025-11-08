@@ -22,17 +22,14 @@ import asyncio
 import tempfile
 import os
 
-# Mathpix 클라이언트를 동적으로 로드
-smartocr_root = Path(__file__).parent.parent.parent
-mathpix_client_path = smartocr_root / "core" / "mathpix_client.py"
-
-spec = importlib.util.spec_from_file_location("mathpix_client", mathpix_client_path)
-mathpix_module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mathpix_module)
-MathpixClient = mathpix_module.MathpixClient
-UploadRequest = mathpix_module.UploadRequest
-ConversionFormat = mathpix_module.ConversionFormat
-ApiStatus = mathpix_module.ApiStatus
+# Mathpix 클라이언트 import (problem_cutter/core/)
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from core.mathpix_client import (
+    MathpixClient,
+    UploadRequest,
+    ConversionFormat,
+    ApiStatus
+)
 
 from .types import ToolResult, ToolDiagnostics
 

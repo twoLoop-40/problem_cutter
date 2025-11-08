@@ -20,9 +20,9 @@ import os
 import asyncio
 from dotenv import load_dotenv
 
-# .env 파일 로드
-project_root = Path(__file__).parent
-dotenv_path = project_root.parent / ".env"
+# .env 파일 로드 (problem_cutter 디렉토리)
+project_root = Path(__file__).parent.parent  # problem_cutter/
+dotenv_path = project_root / ".env"
 load_dotenv(dotenv_path)
 
 sys.path.insert(0, str(project_root))
@@ -62,9 +62,9 @@ async def test_biology_with_mathpix():
         print(f"\n✓ Mathpix API 키 확인됨 (App ID: {app_id[:20]}...)")
         use_mathpix = True
 
-    # 파일 경로
-    pdf_path = project_root.parent / "samples" / "고3_과학탐구_생명과학Ⅰ_문항지.pdf"
-    output_base = project_root.parent / "output" / "생명과학_mathpix_test"
+    # 파일 경로 (problem_cutter 디렉토리 기준)
+    pdf_path = project_root / "samples" / "고3_과학탐구_생명과학Ⅰ_문항지.pdf"
+    output_base = project_root / "output" / "생명과학_mathpix_test"
 
     if not pdf_path.exists():
         print(f"❌ 파일을 찾을 수 없습니다: {pdf_path}")
