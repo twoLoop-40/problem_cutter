@@ -19,11 +19,13 @@ def main():
     st.set_page_config(
         page_title="PDF Problem Cutter",
         page_icon="✂️",
-        layout="wide"
+        layout="centered",  # "wide"에서 "centered"로 변경
+        initial_sidebar_state="expanded"
     )
 
     st.title("✂️ PDF Problem Cutter")
-    st.markdown("PDF 시험지에서 문제를 자동으로 추출합니다 (Formal Spec Driven)")
+    st.markdown("PDF 시험지에서 문제를 자동으로 추출합니다")
+    st.caption("Powered by Formal Spec Driven Development (Idris2)")
 
     # 사이드바: 설정
     with st.sidebar:
