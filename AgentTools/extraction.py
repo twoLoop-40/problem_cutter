@@ -28,6 +28,7 @@ __all__ = [
     "extract_solution_items",
     "crop_problem_images",
     "validate_problem_numbers",
+    "extract_problem_regions",
 ]
 
 
@@ -203,6 +204,113 @@ def validate_problem_numbers(
         diagnostics.add_warning(feedback.message)
 
     result = ToolResult.ok("문제 번호 검증", feedback=feedback)
+    result.diagnostics = diagnostics
+    return result
+
+
+def extract_problem_regions(
+    image_path: str,
+    found_problems: List[int],
+) -> ToolResult:
+    """
+    이미지에서 문제 영역 추출 (LangGraph 워크플로우용)
+
+    Idris2 명세: Specs/System/ProjectReorganization.idr
+
+    Args:
+        image_path: 컬럼 이미지 경로
+        found_problems: 이 컬럼에서 발견된 문제 번호 리스트
+
+    Returns:
+        ToolResult with data:
+            - regions: List[(problem_num, cropped_image)]
+            - marker_count: 발견된 마커 수
+    """
+    import cv2
+    from core.ocr_engine import parse_problem_number
+    from core.ocr.interface import OcrInput
+    from core.ocr.tesseract_plugin import TesseractEngine
+
+    diagnostics = ToolDiagnostics()
+
+    # 이미지 로드
+    image = cv2.imread(image_path)
+    if image is None:
+        diagnostics.add_error(f"이미지 로드 실패: {image_path}")
+        return ToolResult.fail("이미지 로드 실패", diagnostics=diagnostics)
+
+    height, width = image.shape[:2]
+
+    # Tesseract로 OCR 실행
+    engine = TesseractEngine()
+    ocr_input = OcrInput(image_path=image_path, languages=["kor", "eng"], dpi=300)
+
+    try:
+        ocr_output = engine.execute(ocr_input)
+    except Exception as e:
+        diagnostics.add_error(f"OCR 실행 실패: {str(e)}")
+        return ToolResult.fail("OCR 실행 실패", diagnostics=diagnostics)
+
+    # 문제 번호 마커 찾기
+    markers = []  # (problem_num, y_pos, bbox)
+    for block in ocr_output.blocks:
+        prob_num = parse_problem_number(block.text)
+        if prob_num is not None and prob_num in found_problems:
+            y_pos = block.bbox[1]  # y1 (top)
+            markers.append((prob_num, y_pos, block.bbox))
+
+    diagnostics.extras["marker_count"] = len(markers)
+    diagnostics.extras["found_problems"] = found_problems
+
+    if not markers:
+        diagnostics.add_warning(
+            f"문제 번호 마커를 찾지 못했습니다. "
+            f"OCR blocks: {len(ocr_output.blocks)}, "
+            f"Expected: {found_problems}"
+        )
+        return ToolResult.ok(
+            "마커 없음",
+            regions=[],
+            marker_count=0,
+            diagnostics=diagnostics,
+        )
+
+    # Y 위치 순서로 정렬
+    markers.sort(key=lambda m: m[1])
+
+    # 문제 영역 추출
+    problem_regions = []
+    for i, (prob_num, y_pos, bbox) in enumerate(markers):
+        # 시작 y: 문제 번호 위치에서 약간 위
+        y_start = max(0, bbox[1] - 30)
+
+        # 끝 y: 다음 문제 번호 직전 or 이미지 끝
+        if i + 1 < len(markers):
+            y_end = markers[i + 1][2][1] - 30
+        else:
+            y_end = height
+
+        # 최소 높이 체크 (너무 작은 영역 제외)
+        if y_end - y_start < 100:
+            diagnostics.add_warning(
+                f"문제 {prob_num}번 영역이 너무 작음 (높이: {y_end - y_start}px)"
+            )
+            continue
+
+        # 문제 영역 crop
+        problem_img = image[y_start:y_end, :]
+        problem_regions.append((prob_num, problem_img))
+
+    diagnostics.extras["region_count"] = len(problem_regions)
+
+    if not problem_regions:
+        diagnostics.add_warning("추출된 문제 영역이 없습니다.")
+
+    result = ToolResult.ok(
+        f"{len(problem_regions)}개 문제 영역 추출",
+        regions=problem_regions,
+        marker_count=len(markers),
+    )
     result.diagnostics = diagnostics
     return result
 

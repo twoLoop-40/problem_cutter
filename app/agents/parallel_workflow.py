@@ -339,29 +339,45 @@ def generate_files_node(state: ExtractionState) -> dict:
     파일 생성 (Sequential)
 
     Idris2: MergeResultsNode (parallelLevel = Sequential)
+
+    OCR 결과의 bbox를 이용해 문제 영역을 추출
     """
+    from AgentTools.extraction import extract_problem_regions
+
     print(f"[Sequential] 파일 생성 시작")
 
     output_dir = Path(f"output/{Path(state['pdf_path']).stem}_parallel")
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    detected = state.get("detected_problems", [])
-
     # 페이지별로 순서대로 파일 생성
     file_count = 0
+
     for page_state in state["page_states"]:
         for col_state in page_state["column_states"]:
             img_path = col_state["image_path"]
             if not img_path:
                 continue
 
-            image = cv2.imread(img_path)
+            # AgentTools 사용하여 문제 영역 추출
+            result = extract_problem_regions(
+                image_path=img_path,
+                found_problems=col_state["found_problems"]
+            )
 
-            # 이 컬럼에서 발견된 문제들에 대해 파일 생성
-            for problem_num in col_state["found_problems"]:
-                output_file = output_dir / f"{problem_num}_prb.png"
-                cv2.imwrite(str(output_file), image)
+            if not result.success:
+                print(f"    ⚠️  {img_path} 추출 실패: {result.message}")
+                for warning in result.diagnostics.warnings:
+                    print(f"      - {warning}")
+                continue
+
+            problem_regions = result.data.get("regions", [])
+
+            # 파일 저장
+            for prob_num, problem_img in problem_regions:
+                output_file = output_dir / f"{prob_num}_prb.png"
+                cv2.imwrite(str(output_file), problem_img)
                 file_count += 1
+                print(f"    ✓ 문제 {prob_num}번 저장")
 
     print(f"  → 파일 생성 완료: {file_count}개")
 

@@ -9,7 +9,7 @@ from core.ocr_engine import run_tesseract_ocr, sort_by_reading_order, parse_prob
 from core.problem_extractor import detect_problem_markers
 
 # Step 1: Load PDF
-pdf_path = "samples/통합과학_1_샘플.pdf"
+pdf_path = "samples/고3_과학탐구_생명과학Ⅰ_문항지.pdf"
 images = pdf_to_images(pdf_path, dpi=200)
 image = images[0]
 
