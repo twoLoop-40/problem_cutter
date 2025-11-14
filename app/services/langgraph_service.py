@@ -56,6 +56,11 @@ class LangGraphService:
             mathpix_app_id: Mathpix App ID (미사용)
         """
         try:
+            from app.models import JobStatus
+
+            # 작업 상태를 processing으로 변경
+            self.job_service.update_status(job_id, JobStatus.PROCESSING)
+
             # 병렬 처리 워크플로우 생성 (캐시됨)
             if self.workflow is None:
                 self.workflow = create_parallel_extraction_workflow()
@@ -76,24 +81,43 @@ class LangGraphService:
 
             # 결과 처리
             if final_state["current_state"] == "Complete":
-                # 성공
-                self.job_service.complete_job(
+                # 성공: 상태 업데이트 및 결과 저장
+                from app.models import JobStatus
+
+                self.job_service.update_status(job_id, JobStatus.COMPLETED)
+
+                detected = final_state["detected_problems"]
+                missing = final_state.get("missing_problems", [])
+
+                self.job_service.save_result(
                     job_id=job_id,
-                    detected_problems=final_state["detected_problems"],
-                    missing_problems=final_state.get("missing_problems", []),
-                    output_dir=final_state.get("output_dir"),
-                    output_zip_path=final_state.get("zip_path"),
+                    total_problems=len(detected) + len(missing),
+                    success_count=len(detected),
+                    output_zip_path=final_state.get("zip_path", ""),
                     processing_time_seconds=60,  # TODO: 실제 시간 계산
                 )
+
+                print(f"[LangGraphService] Job {job_id} 완료: {len(detected)}개 문제 감지")
             else:
                 # 실패
+                from app.models import JobStatus
                 error_msg = final_state.get("error", "Unknown error")
-                self.job_service.fail_job(job_id, error_msg)
+
+                self.job_service.update_status(job_id, JobStatus.FAILED)
+                self.job_service.record_error(job_id, error_msg)
+
+                print(f"[LangGraphService] Job {job_id} 실패: {error_msg}")
 
         except Exception as e:
             import traceback
+            from app.models import JobStatus
+
             error_msg = f"{str(e)}\n{traceback.format_exc()}"
-            self.job_service.fail_job(job_id, error_msg)
+
+            self.job_service.update_status(job_id, JobStatus.FAILED)
+            self.job_service.record_error(job_id, error_msg)
+
+            print(f"[LangGraphService] Job {job_id} 예외 발생: {str(e)}")
 
     def _update_progress(self, job_id: str, progress: int, message: str):
         """진행률 업데이트 (LangGraph 내부에서 처리되므로 스텁)"""
