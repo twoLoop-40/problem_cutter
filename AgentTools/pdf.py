@@ -122,3 +122,7 @@ def summarize_pdf(pdf_path: str, *, dpi: int = DEFAULT_DPI) -> ToolResult:
 
 
 
+
+
+
+

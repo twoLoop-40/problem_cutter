@@ -114,3 +114,4 @@ Idris2 명세 (.specs/)       Python 구현 (core/)
 
 - [Idris2 공식 문서](https://idris2.readthedocs.io/)
 - System 디렉토리의 README.md: 각 모듈 상세 설명
+

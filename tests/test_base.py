@@ -181,3 +181,4 @@ class TestAllContained:
         parent = BBox(Coord(0, 0), 100, 100)
         assert check_all_contained(parent, []) == True
 
+

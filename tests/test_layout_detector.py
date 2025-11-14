@@ -147,3 +147,4 @@ def test_layout_with_gaps():
     # 여백이 감지되면 2단 이상이어야 함
     assert len(layout.columns) >= 1
 
+

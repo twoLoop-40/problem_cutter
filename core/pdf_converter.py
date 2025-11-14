@@ -128,3 +128,4 @@ def get_pdf_page_count(pdf_path: str) -> int:
         images = pdf_to_images(pdf_path)
         return len(images)
 
+

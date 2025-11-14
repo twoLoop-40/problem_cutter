@@ -141,3 +141,4 @@ except ImportError:
     cv2 = None
     print("Warning: OpenCV not installed. Install with: pip install opencv-python")
 
+

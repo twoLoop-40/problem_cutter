@@ -347,3 +347,4 @@ detector = LayoutDetector(gap_threshold=30)
 - [OpenCV Hough Line Transform](https://docs.opencv.org/4.x/d9/db0/tutorial_hough_lines.html)
 - [OpenCV Canny Edge Detection](https://docs.opencv.org/4.x/da/d22/tutorial_py_canny.html)
 
+
