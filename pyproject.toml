@@ -27,6 +27,7 @@ dependencies = [
     "sqlalchemy>=2.0.0",
     # UI (Phase 1)
     "streamlit>=1.28.0",
+    "langgraph>=1.0.3",
 ]
 
 [dependency-groups]

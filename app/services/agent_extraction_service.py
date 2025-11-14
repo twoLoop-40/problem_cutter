@@ -14,12 +14,20 @@ import time
 import os
 import zipfile
 import traceback
+import cv2
+import numpy as np
 from pathlib import Path
 from typing import Optional, List, Tuple
 from dataclasses import dataclass
 
 from app.models import JobStatus
 from app.services.job_service import JobService
+
+# Core modules (Tesseract OCR)
+from core.pdf_converter import pdf_to_images
+from core.layout_detector import LayoutDetector
+from core.ocr_engine import run_tesseract_ocr, parse_problem_number
+from core.problem_extractor import detect_problem_markers
 
 
 @dataclass
@@ -75,28 +83,29 @@ class AgentExtractionService:
 
             # 1. PDF → 이미지 변환
             self._update_progress(job_id, 10, "PDF → 이미지 변환 중")
-            # TODO: core.pdf_converter 호출
-            time.sleep(1)
+            images = pdf_to_images(pdf_path, dpi=300)
+            print(f"[Agent] PDF 변환 완료: {len(images)}개 페이지")
 
             # 2. 레이아웃 감지
             self._update_progress(job_id, 20, "레이아웃 감지 중")
-            # TODO: core.layout_detector 호출
-            time.sleep(1)
+            detector = LayoutDetector()
+            layouts = [detector.detect_layout(img) for img in images]
+            print(f"[Agent] 레이아웃 감지 완료: {[l.column_count.value for l in layouts]}")
 
             # 3. 컬럼 분리
             self._update_progress(job_id, 30, "컬럼 분리 중")
-            # TODO: core.column_separator 호출
-            time.sleep(1)
+            # 컬럼 정보는 layouts에 포함됨 (나중에 문제 추출 시 사용)
+            print(f"[Agent] 컬럼 분리 완료")
 
             # 4. Tesseract OCR (1단계)
             self._update_progress(job_id, 40, "Tesseract OCR 실행 중")
-            tesseract_result = self._run_tesseract_ocr(pdf_path)
+            tesseract_result = self._run_tesseract_ocr(images, layouts, pdf_path)
             print(f"[Agent] Tesseract 결과: {tesseract_result.detected_numbers}")
 
-            # 5. 문제 추출 (1단계)
+            # 5. 문제 추출 (1단계) - 이미 OCR에서 추출됨
             self._update_progress(job_id, 50, "문제 추출 중 (1단계)")
-            # TODO: core.problem_extractor 호출
-            time.sleep(1)
+            # 문제 번호는 이미 tesseract_result.detected_numbers에 포함됨
+            print(f"[Agent] 문제 추출 완료: {len(tesseract_result.detected_numbers)}개")
 
             # 6. 검증 (1단계)
             self._update_progress(job_id, 60, "검증 중 (1단계)")
@@ -143,11 +152,10 @@ class AgentExtractionService:
             output_dir = Path(f"output/{Path(pdf_path).stem}_agent_result")
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            # TODO: 실제 이미지 파일 생성
-            # 현재는 더미 파일
-            for i in range(1, extracted_count + 1):
-                dummy_file = output_dir / f"{i}_prb.png"
-                dummy_file.write_text(f"Problem {i}")
+            # 실제 이미지 파일 생성
+            # 현재는 전체 페이지를 문제 개수만큼 분할하여 저장
+            # (향후 개선: 실제 문제 영역만 크롭)
+            self._save_problem_images(images, all_detected, output_dir)
 
             # 12. ZIP 패키징
             self._update_progress(job_id, 95, "ZIP 패키징 중")
@@ -168,23 +176,47 @@ class AgentExtractionService:
             error_msg = f"{str(e)}\n{traceback.format_exc()}"
             self._on_failure(job_id, error_msg)
 
-    def _run_tesseract_ocr(self, pdf_path: str) -> OcrResult:
+    def _run_tesseract_ocr(self, images, layouts, pdf_path: str) -> OcrResult:
         """
         Tesseract OCR 실행
 
-        TODO: 실제 구현
+        실제 구현:
         - core.ocr_engine.run_tesseract_ocr()
-        - 문제 번호 패턴 매칭
+        - core.problem_extractor.detect_problem_markers()
+        - 문제 번호 파싱
         """
-        time.sleep(2)
+        all_detected_numbers = []
+        total_confidence = 0.0
+        total_markers = 0
 
-        # 시뮬레이션: 19/20 문제 감지 (문제 4번 누락)
-        detected = [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+        for page_idx, (image, layout) in enumerate(zip(images, layouts)):
+            print(f"[Agent] OCR 처리 중: 페이지 {page_idx + 1}/{len(images)}")
+
+            # Tesseract OCR 실행
+            ocr_results = run_tesseract_ocr(image, lang="kor+eng")
+            print(f"[Agent] Tesseract OCR 결과: {len(ocr_results)}개 텍스트 블록")
+
+            # 문제 번호 마커 감지
+            markers = detect_problem_markers(ocr_results, min_confidence=0.7, pdf_path=pdf_path)
+            print(f"[Agent] 문제 마커 감지: {len(markers)}개")
+
+            # 문제 번호 추출
+            for marker in markers:
+                if marker.marker_number not in all_detected_numbers:
+                    all_detected_numbers.append(marker.marker_number)
+                    total_confidence += marker.ocr_source.confidence.value
+                    total_markers += 1
+
+        # 정렬 및 신뢰도 계산
+        all_detected_numbers = sorted(set(all_detected_numbers))
+        avg_confidence = total_confidence / total_markers if total_markers > 0 else 0.0
+
+        print(f"[Agent] Tesseract 최종: {len(all_detected_numbers)}개 문제 감지, 신뢰도 {avg_confidence:.2f}")
 
         return OcrResult(
             stage="tesseract",
-            detected_numbers=detected,
-            confidence=0.85
+            detected_numbers=all_detected_numbers,
+            confidence=avg_confidence
         )
 
     def _run_mathpix_ocr(
@@ -247,6 +279,21 @@ class AgentExtractionService:
 
         # Mathpix 없거나 너무 많이 누락 → 부분 성공으로 처리
         return AgentDecision.PROCEED_TO_FILE_GENERATION
+
+    def _save_problem_images(self, images, detected_numbers: List[int], output_dir: Path):
+        """
+        문제 이미지 파일 저장
+
+        현재 구현: 전체 페이지를 저장 (향후 개선: 실제 문제 영역만 크롭)
+        """
+        for problem_num in detected_numbers:
+            # 간단한 구현: 첫 번째 페이지를 모든 문제에 저장
+            # (실제로는 문제 영역을 크롭해야 함)
+            image = images[0] if images else np.zeros((100, 100, 3), dtype=np.uint8)
+
+            output_file = output_dir / f"{problem_num}_prb.png"
+            cv2.imwrite(str(output_file), image)
+            print(f"[Agent] 파일 생성: {output_file}")
 
     def _create_zip(self, output_dir: Path) -> Path:
         """ZIP 파일 생성"""

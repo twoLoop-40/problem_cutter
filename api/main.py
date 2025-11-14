@@ -18,7 +18,7 @@ from app.database import get_db, init_db
 from app.models import JobStatus
 from app.repositories import JobRepository
 from app.services import JobService, ExtractionService
-from app.services.agent_extraction_service import AgentExtractionService
+from app.services.langgraph_service import LangGraphService
 
 # FastAPI 앱 생성
 app = FastAPI(
@@ -96,11 +96,11 @@ async def upload_pdf(
         mathpix_app_id=mathpix_app_id
     )
 
-    # 3. 백그라운드 작업 시작 (Agent 기반 2-Stage OCR)
-    agent_service = AgentExtractionService(job_service)
+    # 3. 백그라운드 작업 시작 (LangGraph Agent)
+    langgraph_service = LangGraphService(job_service)
 
     background_tasks.add_task(
-        agent_service.execute_extraction,
+        langgraph_service.execute_extraction,
         job_id=job.id,
         pdf_path=str(file_path),
         mathpix_api_key=mathpix_api_key,
