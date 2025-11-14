@@ -119,66 +119,80 @@ async def process_column_ocr(
         dpi=300,
     )
 
-    # asyncio.to_thread로 동기 함수를 비동기로 실행
-    ocr_output = await asyncio.to_thread(engine.execute, ocr_input)
-    execution_result = ocr_output_to_execution_result(
-        ocr_output, ocr_strategy.stage1_engine
-    )
-
-    # 문제 영역 계산: 컬럼을 조각내서 문제 시작점 찾기
-    from core.ocr_engine import parse_problem_number
+    # Vision 기반 경계 감지 (OCR 대신)
+    from core.vision_boundary_detector import detect_boundaries_with_vision
     import cv2
+    import os
 
     image = cv2.imread(img_path)
     if image is None:
         print(f"  → 이미지 로드 실패: {img_path}")
         return {**column_state, "success": False}
 
-    height = image.shape[0]
+    # Vision으로 문제 경계 감지
+    try:
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        problem_bboxes = await asyncio.to_thread(
+            detect_boundaries_with_vision,
+            image,
+            num_slices=3,  # 컬럼 이미지는 작으므로 3조각만
+            api_key=api_key,
+        )
 
-    # 1. OCR 결과에서 모든 문제 번호와 위치 수집
-    all_markers = []  # (problem_num, y_top, y_bottom)
-    for block in ocr_output.blocks:
-        prob_num = parse_problem_number(block.text)
-        if prob_num is not None:
-            y_top = block.bbox[1]
-            y_bottom = block.bbox[3]
-            all_markers.append((prob_num, y_top, y_bottom))
+        # 감지된 문제 번호 추출
+        detected_problems = list(problem_bboxes.keys())
 
-    # 2. Y 위치로 정렬
-    all_markers.sort(key=lambda m: m[1])
+        print(f"  → 페이지 {page_num}, 컬럼 {col_idx}: [Vision] {len(problem_bboxes)}개 문제 감지")
 
-    # 3. 문제 영역 계산 (글자가 안 잘리도록 여유 공간 포함)
-    problem_bboxes = {}
-    for i, (prob_num, y_top, y_bottom) in enumerate(all_markers):
-        # 시작: 문제 번호 위 50px (또는 이전 문제 끝에서 중간)
-        if i == 0:
-            y_start = max(0, y_top - 50)
-        else:
-            prev_end = all_markers[i-1][2]  # 이전 문제 번호의 bottom
-            y_start = max(0, (prev_end + y_top) // 2 - 30)
+    except Exception as e:
+        print(f"  → Vision 실패, OCR로 대체: {str(e)}")
 
-        # 끝: 다음 문제 번호 직전 (또는 컬럼 끝)
-        if i + 1 < len(all_markers):
-            next_start = all_markers[i + 1][1]  # 다음 문제 번호의 top
-            y_end = min(height, (y_bottom + next_start) // 2 + 30)
-        else:
-            y_end = height
+        # Fallback: OCR 사용
+        ocr_output = await asyncio.to_thread(engine.execute, ocr_input)
+        execution_result = ocr_output_to_execution_result(
+            ocr_output, ocr_strategy.stage1_engine
+        )
 
-        # 최소 높이 체크
-        if y_end - y_start < 80:
-            continue
+        from core.ocr_engine import parse_problem_number
 
-        problem_bboxes[prob_num] = (y_start, y_end)
+        height = image.shape[0]
+        all_markers = []
 
-    print(f"  → 페이지 {page_num}, 컬럼 {col_idx}: {len(all_markers)}개 마커 발견, {len(problem_bboxes)}개 영역 계산")
+        for block in ocr_output.blocks:
+            prob_num = parse_problem_number(block.text)
+            if prob_num is not None:
+                y_top = block.bbox[1]
+                y_bottom = block.bbox[3]
+                all_markers.append((prob_num, y_top, y_bottom))
+
+        all_markers.sort(key=lambda m: m[1])
+
+        problem_bboxes = {}
+        for i, (prob_num, y_top, y_bottom) in enumerate(all_markers):
+            if i == 0:
+                y_start = max(0, y_top - 50)
+            else:
+                prev_end = all_markers[i-1][2]
+                y_start = max(0, (prev_end + y_top) // 2 - 30)
+
+            if i + 1 < len(all_markers):
+                next_start = all_markers[i + 1][1]
+                y_end = min(height, (y_bottom + next_start) // 2 + 30)
+            else:
+                y_end = height
+
+            if y_end - y_start >= 80:
+                problem_bboxes[prob_num] = (y_start, y_end)
+
+        detected_problems = execution_result.detected_problems
+        print(f"  → 페이지 {page_num}, 컬럼 {col_idx}: [OCR Fallback] {len(problem_bboxes)}개 영역 계산")
 
     return ColumnState(
         column_index=col_idx,
         image_path=img_path,
-        found_problems=execution_result.detected_problems,
+        found_problems=detected_problems,
         problem_bboxes=problem_bboxes,
-        extracted_count=len(execution_result.detected_problems),
+        extracted_count=len(detected_problems),
         mathpix_verified=False,
         success=True,
     )
