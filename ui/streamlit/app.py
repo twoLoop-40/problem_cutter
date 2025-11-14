@@ -177,6 +177,12 @@ def main():
     # 작업 상태 모니터링
     if "current_job_id" in st.session_state:
         st.divider()
+
+        # 새 작업으로 돌아가기 버튼
+        if st.button("⬅️ 새 작업", key="back_to_new", use_container_width=True):
+            del st.session_state["current_job_id"]
+            st.rerun()
+
         show_job_status(st.session_state["current_job_id"])
 
     # 모든 작업 리스트

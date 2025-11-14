@@ -28,6 +28,7 @@ dependencies = [
     # UI (Phase 1)
     "streamlit>=1.28.0",
     "langgraph>=1.0.3",
+    "anthropic>=0.72.1",
 ]
 
 [dependency-groups]
