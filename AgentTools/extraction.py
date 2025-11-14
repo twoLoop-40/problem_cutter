@@ -253,20 +253,25 @@ def extract_problem_regions(
 
     # 문제 번호 마커 찾기
     markers = []  # (problem_num, y_pos, bbox)
+    all_found_nums = []  # 디버깅용: 모든 발견된 문제 번호
     for block in ocr_output.blocks:
         prob_num = parse_problem_number(block.text)
-        if prob_num is not None and prob_num in found_problems:
-            y_pos = block.bbox[1]  # y1 (top)
-            markers.append((prob_num, y_pos, block.bbox))
+        if prob_num is not None:
+            all_found_nums.append(prob_num)
+            if prob_num in found_problems:
+                y_pos = block.bbox[1]  # y1 (top)
+                markers.append((prob_num, y_pos, block.bbox))
 
     diagnostics.extras["marker_count"] = len(markers)
     diagnostics.extras["found_problems"] = found_problems
+    diagnostics.extras["all_ocr_numbers"] = all_found_nums  # 디버깅
 
     if not markers:
         diagnostics.add_warning(
             f"문제 번호 마커를 찾지 못했습니다. "
             f"OCR blocks: {len(ocr_output.blocks)}, "
-            f"Expected: {found_problems}"
+            f"Expected: {found_problems}, "
+            f"Found in OCR: {all_found_nums}"
         )
         return ToolResult.ok(
             "마커 없음",

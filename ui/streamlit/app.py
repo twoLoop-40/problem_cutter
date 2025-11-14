@@ -15,23 +15,36 @@ from pathlib import Path
 API_BASE_URL = "http://localhost:8000"
 
 
-def check_backend_connection():
-    """백엔드 서버 연결 상태 확인"""
+def check_backend_connection(silent=False):
+    """백엔드 서버 연결 상태 확인 (실시간)
+
+    Args:
+        silent: True일 경우 메시지 출력 없이 상태만 반환
+    """
     try:
-        response = requests.get(f"{API_BASE_URL}/", timeout=2)
+        start_time = time.time()
+        response = requests.get(f"{API_BASE_URL}/", timeout=3)
+        elapsed = (time.time() - start_time) * 1000  # ms
+
         if response.status_code == 200:
-            st.success("✅ 백엔드 서버 연결됨")
+            if not silent:
+                data = response.json()
+                st.success(f"✅ 백엔드 서버 연결됨 ({elapsed:.0f}ms)")
+                st.caption(f"API 버전: {data.get('version', 'unknown')}")
             return True
     except requests.exceptions.ConnectionError:
-        st.error("❌ 백엔드 서버에 연결할 수 없습니다")
-        st.warning(f"서버가 실행 중인지 확인하세요: `uv run python -m api.main`")
-        st.info(f"서버 주소: {API_BASE_URL}")
+        if not silent:
+            st.error("❌ 백엔드 서버에 연결할 수 없습니다")
+            st.warning(f"서버가 실행 중인지 확인하세요: `uv run python -m api.main`")
+            st.info(f"서버 주소: {API_BASE_URL}")
         return False
     except requests.exceptions.Timeout:
-        st.warning("⚠️ 백엔드 서버 응답 시간 초과")
+        if not silent:
+            st.warning("⚠️ 백엔드 서버 응답 시간 초과 (3초 이상)")
         return False
     except Exception as e:
-        st.error(f"❌ 연결 오류: {e}")
+        if not silent:
+            st.error(f"❌ 연결 오류: {e}")
         return False
 
 
@@ -47,12 +60,25 @@ def main():
     st.markdown("PDF 시험지에서 문제를 자동으로 추출합니다")
     st.caption("Powered by Formal Spec Driven Development (Idris2)")
 
-    # 백엔드 연결 상태 확인
-    check_backend_connection()
+    # 백엔드 연결 상태 확인 (조용히 실행, 사이드바에만 표시)
+    backend_status = check_backend_connection(silent=True)
 
     # 사이드바: 설정
     with st.sidebar:
         st.header("⚙️ 설정")
+
+        # 백엔드 상태 표시 (사이드바 상단)
+        st.markdown("### 🌐 백엔드 연결")
+        if backend_status:
+            st.success("🟢 연결됨")
+        else:
+            st.error("🔴 연결 끊김")
+            st.caption("서버 시작: `uv run python -m api.main`")
+
+        if st.button("🔄 연결 상태 확인", key="check_connection"):
+            st.rerun()
+
+        st.divider()
 
         use_mathpix = st.checkbox("Mathpix 사용 (더 정확)", value=False)
 
@@ -78,26 +104,31 @@ def main():
         if st.button("🔄 새로고침"):
             st.rerun()
 
-        try:
-            response = requests.get(f"{API_BASE_URL}/jobs")
-            if response.status_code == 200:
-                jobs = response.json()
-                st.metric("전체 작업", len(jobs))
+        # 백엔드 연결된 경우에만 작업 조회
+        if backend_status:
+            try:
+                response = requests.get(f"{API_BASE_URL}/jobs", timeout=2)
+                if response.status_code == 200:
+                    jobs = response.json()
+                    st.metric("전체 작업", len(jobs))
 
-                pending = sum(1 for j in jobs if j["status"] == "pending")
-                processing = sum(1 for j in jobs if j["status"] == "processing")
-                completed = sum(1 for j in jobs if j["status"] == "completed")
-                failed = sum(1 for j in jobs if j["status"] == "failed")
+                    pending = sum(1 for j in jobs if j["status"] == "pending")
+                    processing = sum(1 for j in jobs if j["status"] == "processing")
+                    completed = sum(1 for j in jobs if j["status"] == "completed")
+                    failed = sum(1 for j in jobs if j["status"] == "failed")
 
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("대기", pending)
-                    st.metric("처리 중", processing)
-                with col2:
-                    st.metric("완료", completed)
-                    st.metric("실패", failed)
-        except Exception as e:
-            st.error(f"API 연결 실패: {e}")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("대기", pending)
+                        st.metric("처리 중", processing)
+                    with col2:
+                        st.metric("완료", completed)
+                        st.metric("실패", failed)
+            except Exception:
+                # 연결 오류는 이미 상단에 표시되므로 여기선 조용히 넘어감
+                st.caption("작업 정보를 불러올 수 없습니다")
+        else:
+            st.caption("백엔드 연결이 필요합니다")
 
     # 메인 영역: 업로드
     st.header("📤 PDF 업로드")
@@ -221,10 +252,44 @@ def show_job_status(job_id: str):
 
             # 실패 시 에러 표시
             elif status == "failed":
-                st.error(f"❌ 추출 실패: {job['error']}")
+                st.error(f"❌ 추출 실패")
+                if job.get('error'):
+                    with st.expander("오류 상세 정보"):
+                        st.code(job['error'])
+
+                # 재시도 버튼
+                if st.button("🔄 재시도 (삭제 후 재업로드)", key=f"retry_failed_{job_id}"):
+                    try:
+                        requests.delete(f"{API_BASE_URL}/jobs/{job_id}")
+                        st.info("⚠️ 작업이 삭제되었습니다. 파일을 다시 업로드해주세요.")
+                        del st.session_state["current_job_id"]
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ 재시도 오류: {e}")
+
+            # Pending 상태 경고
+            elif status == "pending":
+                st.warning("⚠️ 작업이 시작되지 않았습니다")
+                st.info("백그라운드 작업이 실행되지 않았을 수 있습니다. 서버를 재시작하거나 작업을 삭제해주세요.")
+
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    if st.button("🔄 새로고침", key=f"refresh_pending_{job_id}"):
+                        st.rerun()
+                with col_b:
+                    if st.button("🗑️ 삭제", key=f"delete_pending_{job_id}"):
+                        try:
+                            requests.delete(f"{API_BASE_URL}/jobs/{job_id}")
+                            st.success("✅ 삭제됨")
+                            del st.session_state["current_job_id"]
+                            time.sleep(0.5)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ 삭제 오류: {e}")
 
             # 처리 중이면 자동 새로고침
-            elif status in ["pending", "processing"]:
+            elif status == "processing":
                 time.sleep(2)
                 st.rerun()
 
@@ -238,7 +303,7 @@ def show_job_status(job_id: str):
 def show_job_list():
     """모든 작업 리스트 표시"""
     try:
-        response = requests.get(f"{API_BASE_URL}/jobs")
+        response = requests.get(f"{API_BASE_URL}/jobs", timeout=2)
 
         if response.status_code == 200:
             jobs = response.json()
@@ -248,26 +313,62 @@ def show_job_list():
                 return
 
             for job in jobs[:10]:  # 최근 10개만
-                with st.expander(f"{job['job_id'][:8]}... - {job['status']}"):
+                status = job['status']
+                status_emoji = {
+                    "pending": "⏳",
+                    "processing": "⚙️",
+                    "completed": "✅",
+                    "failed": "❌"
+                }
+
+                with st.expander(f"{status_emoji.get(status, '❓')} {job['job_id'][:8]}... - {status}"):
                     col1, col2 = st.columns(2)
 
                     with col1:
                         st.text(f"PDF: {Path(job['pdf_path']).name}")
-                        st.text(f"상태: {job['status']}")
+                        st.text(f"상태: {status}")
                         st.text(f"진행률: {job['progress']['percentage']}%")
+
+                        # Pending 상태 경고
+                        if status == "pending":
+                            st.warning("⚠️ 작업이 시작되지 않았습니다. 백그라운드 작업이 실행되지 않았을 수 있습니다.")
 
                     with col2:
                         st.text(f"생성: {job['created_at']}")
 
+                        # 상태별 버튼 표시
                         if st.button("📊 상태 보기", key=f"view_{job['job_id']}"):
                             st.session_state["current_job_id"] = job['job_id']
                             st.rerun()
 
                         if st.button("🗑️ 삭제", key=f"delete_{job['job_id']}"):
-                            requests.delete(f"{API_BASE_URL}/jobs/{job['job_id']}")
-                            st.success("삭제됨")
-                            st.rerun()
+                            try:
+                                response = requests.delete(f"{API_BASE_URL}/jobs/{job['job_id']}")
+                                if response.status_code == 200:
+                                    st.success("✅ 삭제됨")
+                                    time.sleep(0.5)
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ 삭제 실패: {response.text}")
+                            except Exception as e:
+                                st.error(f"❌ 삭제 오류: {e}")
 
+                        # Pending/Failed 상태면 재시도 버튼 표시
+                        if status in ["pending", "failed"]:
+                            if st.button("🔄 재시도 (삭제 후 재업로드)", key=f"retry_{job['job_id']}", type="secondary"):
+                                try:
+                                    # 작업 삭제
+                                    requests.delete(f"{API_BASE_URL}/jobs/{job['job_id']}")
+                                    st.info("⚠️ 작업이 삭제되었습니다. 파일을 다시 업로드해주세요.")
+                                    time.sleep(1)
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ 재시도 오류: {e}")
+
+    except requests.exceptions.ConnectionError:
+        st.warning("⚠️ 백엔드 서버에 연결할 수 없습니다")
+    except requests.exceptions.Timeout:
+        st.warning("⚠️ 서버 응답 시간 초과")
     except Exception as e:
         st.error(f"작업 목록 조회 실패: {e}")
 

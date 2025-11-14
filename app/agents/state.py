@@ -27,6 +27,9 @@ class ColumnState(TypedDict):
     found_problems: List[int]
     """이 컬럼에서 발견된 문제 번호들"""
 
+    problem_bboxes: Optional[dict]
+    """문제 번호별 bbox 정보 {problem_num: (y_start, y_end)}"""
+
     extracted_count: int
     """추출된 문제 수"""
 

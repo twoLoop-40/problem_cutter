@@ -50,8 +50,8 @@ async def process_page_column_separation(
 
     column_states: List[ColumnState] = []
 
-    if layout.column_count.value == 2:
-        # 2단 레이아웃: 왼쪽, 오른쪽 분리
+    if layout.column_count.value >= 2:
+        # 2단 이상: 컬럼별로 분리
         for col_idx, col_bound in enumerate(layout.columns):
             col_img = image[:, col_bound.left_x:col_bound.right_x]
             col_path = temp_dir / f"page_{page_num}_col_{col_idx}.png"
@@ -61,24 +61,26 @@ async def process_page_column_separation(
                 column_index=col_idx,
                 image_path=str(col_path),
                 found_problems=[],
+                problem_bboxes=None,
                 extracted_count=0,
                 mathpix_verified=False,
                 success=False,
             ))
 
-        print(f"  → 페이지 {page_num}: 2단 분리 완료")
+        print(f"  → 페이지 {page_num}: {layout.column_count.value}단 분리 완료")
     else:
-        # 1단 또는 3단: 원본 그대로 사용
+        # 1단: 원본 그대로 사용
         column_states.append(ColumnState(
             column_index=0,
             image_path=img_path,
             found_problems=[],
+            problem_bboxes=None,
             extracted_count=0,
             mathpix_verified=False,
             success=False,
         ))
 
-        print(f"  → 페이지 {page_num}: {layout.column_count.value}단 (분리 없음)")
+        print(f"  → 페이지 {page_num}: 1단 (분리 없음)")
 
     return PageState(
         page_num=page_num,
@@ -123,12 +125,59 @@ async def process_column_ocr(
         ocr_output, ocr_strategy.stage1_engine
     )
 
-    print(f"  → 페이지 {page_num}, 컬럼 {col_idx}: {len(execution_result.detected_problems)}개 문제 감지")
+    # 문제 영역 계산: 컬럼을 조각내서 문제 시작점 찾기
+    from core.ocr_engine import parse_problem_number
+    import cv2
+
+    image = cv2.imread(img_path)
+    if image is None:
+        print(f"  → 이미지 로드 실패: {img_path}")
+        return {**column_state, "success": False}
+
+    height = image.shape[0]
+
+    # 1. OCR 결과에서 모든 문제 번호와 위치 수집
+    all_markers = []  # (problem_num, y_top, y_bottom)
+    for block in ocr_output.blocks:
+        prob_num = parse_problem_number(block.text)
+        if prob_num is not None:
+            y_top = block.bbox[1]
+            y_bottom = block.bbox[3]
+            all_markers.append((prob_num, y_top, y_bottom))
+
+    # 2. Y 위치로 정렬
+    all_markers.sort(key=lambda m: m[1])
+
+    # 3. 문제 영역 계산 (글자가 안 잘리도록 여유 공간 포함)
+    problem_bboxes = {}
+    for i, (prob_num, y_top, y_bottom) in enumerate(all_markers):
+        # 시작: 문제 번호 위 50px (또는 이전 문제 끝에서 중간)
+        if i == 0:
+            y_start = max(0, y_top - 50)
+        else:
+            prev_end = all_markers[i-1][2]  # 이전 문제 번호의 bottom
+            y_start = max(0, (prev_end + y_top) // 2 - 30)
+
+        # 끝: 다음 문제 번호 직전 (또는 컬럼 끝)
+        if i + 1 < len(all_markers):
+            next_start = all_markers[i + 1][1]  # 다음 문제 번호의 top
+            y_end = min(height, (y_bottom + next_start) // 2 + 30)
+        else:
+            y_end = height
+
+        # 최소 높이 체크
+        if y_end - y_start < 80:
+            continue
+
+        problem_bboxes[prob_num] = (y_start, y_end)
+
+    print(f"  → 페이지 {page_num}, 컬럼 {col_idx}: {len(all_markers)}개 마커 발견, {len(problem_bboxes)}개 영역 계산")
 
     return ColumnState(
         column_index=col_idx,
         image_path=img_path,
         found_problems=execution_result.detected_problems,
+        problem_bboxes=problem_bboxes,
         extracted_count=len(execution_result.detected_problems),
         mathpix_verified=False,
         success=True,
@@ -248,6 +297,12 @@ async def run_ocr_stage1_node_async(state: ExtractionState) -> dict:
         updated_columns = all_column_results[result_idx:result_idx + col_count]
         result_idx += col_count
 
+        # 디버깅: bbox 확인
+        for i, col in enumerate(updated_columns):
+            has_bbox = "problem_bboxes" in col and col["problem_bboxes"] is not None
+            bbox_count = len(col["problem_bboxes"]) if has_bbox else 0
+            print(f"    [DEBUG OCR] 페이지 {page_state['page_num']}, 컬럼 {i}: bbox={bbox_count}개")
+
         # TypedDict는 dict처럼 업데이트
         updated_page = dict(page_state)
         updated_page["column_states"] = updated_columns
@@ -340,44 +395,88 @@ def generate_files_node(state: ExtractionState) -> dict:
 
     Idris2: MergeResultsNode (parallelLevel = Sequential)
 
-    OCR 결과의 bbox를 이용해 문제 영역을 추출
+    핵심: 컬럼 이미지에서 crop한 후, 같은 문제는 수평으로 병합
     """
-    from AgentTools.extraction import extract_problem_regions
+    import numpy as np
 
     print(f"[Sequential] 파일 생성 시작")
 
     output_dir = Path(f"output/{Path(state['pdf_path']).stem}_parallel")
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # 페이지별로 순서대로 파일 생성
     file_count = 0
 
+    # 페이지별로 처리
     for page_state in state["page_states"]:
+        page_num = page_state["page_num"]
+
+        # 1. 문제별로 컬럼 조각들 수집
+        problem_pieces = {}  # {prob_num: [(col_idx, cropped_img), ...]}
+
         for col_state in page_state["column_states"]:
-            img_path = col_state["image_path"]
-            if not img_path:
+            col_idx = col_state["column_index"]
+            col_img_path = col_state.get("image_path")
+            problem_bboxes = col_state.get("problem_bboxes")
+
+            if not col_img_path or not problem_bboxes:
                 continue
 
-            # AgentTools 사용하여 문제 영역 추출
-            result = extract_problem_regions(
-                image_path=img_path,
-                found_problems=col_state["found_problems"]
-            )
-
-            if not result.success:
-                print(f"    ⚠️  {img_path} 추출 실패: {result.message}")
-                for warning in result.diagnostics.warnings:
-                    print(f"      - {warning}")
+            # 컬럼 이미지 로드
+            col_img = cv2.imread(col_img_path)
+            if col_img is None:
                 continue
 
-            problem_regions = result.data.get("regions", [])
+            # 문제별로 crop
+            for prob_num, (y_start, y_end) in problem_bboxes.items():
+                if y_end - y_start < 80:
+                    continue
+
+                # 컬럼 이미지에서 crop
+                cropped = col_img[y_start:y_end, :]
+
+                if prob_num not in problem_pieces:
+                    problem_pieces[prob_num] = []
+                problem_pieces[prob_num].append((col_idx, cropped))
+
+        # 2. 문제별로 컬럼 조각들을 수평 병합
+        for prob_num in sorted(problem_pieces.keys()):
+            pieces = problem_pieces[prob_num]
+
+            # 컬럼 인덱스 순서로 정렬
+            pieces.sort(key=lambda x: x[0])
+
+            if len(pieces) == 1:
+                # 단일 컬럼: 그대로 사용
+                final_img = pieces[0][1]
+            else:
+                # 여러 컬럼: 수평 병합 (높이 맞추기)
+                max_height = max(p[1].shape[0] for p in pieces)
+
+                # 높이를 맞춰서 병합
+                aligned_pieces = []
+                for col_idx, img in pieces:
+                    h, w = img.shape[:2]
+                    if h < max_height:
+                        # 위아래에 흰색 여백 추가
+                        pad_top = 0
+                        pad_bottom = max_height - h
+                        img = cv2.copyMakeBorder(
+                            img, pad_top, pad_bottom, 0, 0,
+                            cv2.BORDER_CONSTANT, value=(255, 255, 255)
+                        )
+                    aligned_pieces.append(img)
+
+                # 수평으로 연결
+                final_img = np.hstack(aligned_pieces)
 
             # 파일 저장
-            for prob_num, problem_img in problem_regions:
-                output_file = output_dir / f"{prob_num}_prb.png"
-                cv2.imwrite(str(output_file), problem_img)
-                file_count += 1
-                print(f"    ✓ 문제 {prob_num}번 저장")
+            output_file = output_dir / f"{prob_num}_prb.png"
+            cv2.imwrite(str(output_file), final_img)
+            file_count += 1
+
+            height = final_img.shape[0]
+            col_count = len(pieces)
+            print(f"    ✓ 페이지 {page_num}, 문제 {prob_num}번 저장 ({height}px, {col_count}개 컬럼)")
 
     print(f"  → 파일 생성 완료: {file_count}개")
 
