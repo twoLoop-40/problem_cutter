@@ -175,10 +175,26 @@ def show_job_status(job_id: str):
                 result = job["result"]
                 st.json(result)
 
-                # 다운로드 버튼
-                if st.button("📥 결과 다운로드"):
-                    download_url = f"{API_BASE_URL}/download/{job_id}"
-                    st.markdown(f"[다운로드 링크]({download_url})")
+                # 다운로드 버튼 (실제 파일 다운로드)
+                zip_path = result.get("output_zip_path")
+                if zip_path:
+                    try:
+                        # 직접 ZIP 파일 읽기
+                        with open(zip_path, "rb") as f:
+                            zip_data = f.read()
+
+                        st.download_button(
+                            label="📥 결과 다운로드",
+                            data=zip_data,
+                            file_name=Path(zip_path).name,
+                            mime="application/zip",
+                            type="primary"
+                        )
+                    except FileNotFoundError:
+                        st.warning(f"⚠️ 파일을 찾을 수 없습니다: {zip_path}")
+                        st.markdown(f"[API 다운로드 시도]({API_BASE_URL}/download/{job_id})")
+                else:
+                    st.warning("다운로드 경로가 없습니다")
 
             # 실패 시 에러 표시
             elif status == "failed":
