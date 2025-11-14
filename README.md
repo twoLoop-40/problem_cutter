@@ -1,114 +1,111 @@
-# PDF Problem Cutter v2.1
+# PDF Problem Cutter v3.0
 
-> Formal Specification Driven PDF 문제 추출 시스템 (Idris2 + Python)
+> Formal Specification Driven PDF 문제 추출 시스템 (Idris2 + FastAPI + Streamlit)
 
 ## 🎯 프로젝트 개요
 
-PDF 시험지에서 문제를 자동으로 분리하여 개별 이미지로 저장하는 시스템입니다.
+PDF 시험지에서 문제를 자동으로 분리하여 개별 이미지로 저장하는 웹 애플리케이션입니다.
 
 **핵심 특징**:
 - ✅ **Idris2 Formal Specifications**: 타입 안전성 보장
+- ✅ **FastAPI 백엔드**: 비동기 처리, RESTful API
+- ✅ **SQLite 데이터베이스**: 작업 관리 및 진행률 추적
+- ✅ **Streamlit UI**: 웹 기반 사용자 인터페이스
 - ✅ **2-Stage OCR**: Tesseract (빠름) + Mathpix (정확함)
-- ✅ **Agent 기반 자동화**: 검증 실패 시 자동 재시도
-- ✅ **LangGraph 병렬 처리**: 페이지별/컬럼별 병렬 실행 (4배 속도)
+- ✅ **실시간 진행률**: 작업 상태 모니터링
 
 ## 🏗️ 프로젝트 구조
 
 ```
 problem_cutter/
-├── .specs/                     # Idris2 Formal Specifications
+├── api/                        # ✨ FastAPI 백엔드
+│   └── main.py                 #    REST API 엔드포인트
+│
+├── app/                        # ✨ 애플리케이션 계층
+│   ├── models/                 #    SQLAlchemy 모델
+│   │   └── job.py              #    Job Entity
+│   ├── repositories/           #    데이터 접근 계층
+│   │   └── job_repository.py
+│   ├── services/               #    비즈니스 로직
+│   │   ├── job_service.py
+│   │   └── extraction_service.py
+│   └── database.py             #    SQLite 설정
+│
+├── ui/                         # ✨ 사용자 인터페이스
+│   └── streamlit/
+│       └── app.py              #    Streamlit 웹 UI
+│
+├── Specs/                      # Idris2 Formal Specifications
 │   └── System/
+│       ├── AppArchitecture.idr # ✨ v3.0: 웹 앱 아키텍처
 │       ├── Base.idr
-│       ├── ExtractionWorkflow.idr   # ✨ v2.1: Mathpix 재추출
-│       ├── LangGraphWorkflow.idr    # ✨ v1.0: 병렬 처리
-│       ├── LayoutDetection.idr
-│       ├── OcrEngine.idr
+│       ├── ExtractionWorkflow.idr
 │       └── ...
 │
 ├── core/                       # 저수준 핵심 모듈
-│   ├── pdf_converter.py        # PDF → 이미지
-│   ├── column_separator.py     # 단 분리
-│   ├── layout_detector.py      # 레이아웃 감지
-│   ├── ocr_engine.py           # Tesseract OCR
-│   ├── mathpix_client.py       # Mathpix API
-│   └── problem_extractor.py    # 문제 추출
-│
-├── AgentTools/                 # Agent 툴 (고수준 인터페이스)
-│   ├── types.py                # ToolResult, ToolDiagnostics
-│   ├── validation.py           # 순차 검증, 재시도 제안
-│   └── mathpix_validator.py    # Mathpix 재검증
-│
-├── workflows/                  # ✨ 실행 워크플로우 (메인)
-│   ├── tesseract_only.py       # Tesseract 단독
-│   ├── with_agent.py           # Agent 자동 재시도
-│   ├── with_mathpix.py         # 2-stage OCR (권장)
-│   └── langgraph_parallel.py   # 병렬 실행 (TODO)
-│
-├── scripts/                    # 유틸리티 스크립트
-│   ├── debug_ocr.py
-│   ├── extract_problems_strict.py
-│   └── test_column_separation.py
-│
-├── tests/                      # 단위 테스트
-│   ├── test_base.py
-│   ├── test_column_separator.py
-│   ├── test_layout_detector.py
+│   ├── pdf_converter.py
+│   ├── layout_detector.py
 │   └── ...
 │
-├── samples/                    # 테스트 PDF
-├── output/                     # 실행 결과
-├── direction/                  # 워크플로우 문서
-├── NEXT_STEPS.md              # 다음 단계 계획
-└── REORGANIZATION_PLAN.md     # 파일 재구성 계획
+├── AgentTools/                 # 고수준 인터페이스
+│   ├── mathpix_coordinate.py   # Mathpix 좌표 추출
+│   └── types.py
+│
+├── workflows/                  # 도메인 로직
+│   ├── with_mathpix.py         # 2-stage OCR
+│   └── ...
+│
+├── docs/                       # 📚 문서
+│   ├── QUICKSTART.md           #    빠른 시작 가이드
+│   ├── APP_ARCHITECTURE.md     #    아키텍처 설계
+│   └── ...
+│
+├── tests/                      # 테스트
+├── samples/                    # 샘플 PDF
+└── uploads/                    # 업로드된 파일
 ```
 
-## 🚀 빠른 시작
+## 🚀 빠른 시작 (웹 앱)
 
 ### 설치
 
 ```bash
-# Python 환경 설정 (uv 사용)
+# Python 환경 설정
 uv sync
 
-# Idris2 설치 (명세 컴파일용, 선택)
-# macOS: brew install idris2
-# Linux: https://github.com/idris-lang/Idris2
+# 또는
+pip install -r requirements.txt
 ```
 
 ### 실행
 
 ```bash
-# 1. Tesseract 단독 (빠름, 기본)
-uv run python -m workflows.tesseract_only samples/생명과학.pdf
+# 터미널 1: FastAPI 백엔드 시작
+python -m api.main
+# → http://localhost:8000
 
-# 2. Agent 기반 (자동 재시도)
-uv run python -m workflows.with_agent samples/생명과학.pdf
-
-# 3. Mathpix 통합 (권장, 가장 정확함)
-# .env 파일에 API 키 설정 필요:
-#   MATHPIX_APP_KEY=your_key
-#   MATHPIX_APP_ID=your_id
-uv run python -m workflows.with_mathpix samples/생명과학.pdf
-
-# 4. LangGraph 병렬 (최고 성능, TODO)
-uv run python -m workflows.langgraph_parallel samples/생명과학.pdf
+# 터미널 2: Streamlit UI 시작
+streamlit run ui/streamlit/app.py
+# → http://localhost:8501
 ```
 
-### 출력
+### 사용 방법
+
+1. Streamlit UI 열기 (http://localhost:8501)
+2. PDF 파일 업로드
+3. (선택) Mathpix API 키 입력
+4. "추출 시작" 클릭
+5. 진행 상황 모니터링 (실시간)
+6. 완료 후 결과 다운로드 (ZIP)
+
+### 결과물
 
 ```
-output/생명과학_mathpix_test/
-├── page_1/
-│   ├── 00_original.png
-│   ├── col_1.png
-│   ├── col_2.png
-│   └── problems/
-│       ├── page1_col_1_prob_01.png  (문제 1번)
-│       ├── page1_col_1_prob_02.png  (문제 2번)
-│       └── ...
-├── page_2/
-├── page_3/
-└── page_4/
+result.zip
+├── 1_prb.png  (문제 1번)
+├── 2_prb.png  (문제 2번)
+├── 3_prb.png  (문제 3번)
+└── ...
 ```
 
 ## 📊 성능
@@ -189,10 +186,10 @@ mathpix_result = await verify_missing_problems_with_mathpix(
 
 ## 📚 주요 문서
 
-- [NEXT_STEPS.md](NEXT_STEPS.md) - 다음 단계 및 작업 계획
-- [REORGANIZATION_PLAN.md](REORGANIZATION_PLAN.md) - 파일 재구성 계획
-- [output/final_results/MATHPIX_TEST_SUMMARY.md](output/final_results/MATHPIX_TEST_SUMMARY.md) - 테스트 결과
-- [direction/](direction/) - 워크플로우 상세 문서
+- **[docs/QUICKSTART.md](docs/QUICKSTART.md)** - 빠른 시작 가이드 (웹 앱)
+- **[docs/APP_ARCHITECTURE.md](docs/APP_ARCHITECTURE.md)** - 아키텍처 설계 문서
+- [docs/NEXT_STEPS.md](docs/NEXT_STEPS.md) - 다음 단계 및 작업 계획
+- [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md) - 테스트 결과
 
 ## 🔬 Formal Specifications
 
@@ -227,22 +224,24 @@ mathpix_result = await verify_missing_problems_with_mathpix(
 
 ## 📈 현재 상태
 
-**v2.1 (2025-11-08)**:
-- ✅ Idris2 명세 완성 (ExtractionWorkflow, LangGraphWorkflow)
-- ✅ 2-Stage OCR 구현 (Tesseract + Mathpix)
-- ✅ Agent 자동 재시도 구현
-- ✅ 파일 재구성 완료 (workflows/, scripts/, tests/)
-- ⏳ LangGraph 병렬 처리 (명세만 완성, 구현 대기)
-- ⏳ Mathpix 발견 후 이미지 재추출 (TODO)
+**v3.0 (2025-11-14)** - 웹 앱 Phase 1 완료:
+- ✅ FastAPI 백엔드 구현 (RESTful API)
+- ✅ SQLite 데이터베이스 (Job 관리)
+- ✅ Streamlit UI (웹 인터페이스)
+- ✅ 실시간 진행률 추적
+- ✅ Idris2 명세 (AppArchitecture.idr)
+- ✅ Mathpix 좌표 추출 (CoordinateScaler)
+- ⏳ workflows 통합 (TODO)
+- ⏳ LangGraph 병렬 처리 (TODO)
 
 ## 🎯 다음 마일스톤
 
-1. **Phase 1** (우선): Mathpix 발견 후 이미지 재추출
-2. **Phase 2**: LangGraph 병렬 워크플로우 구현
-3. **Phase 3**: 테스트 커버리지 80% 달성
-4. **Phase 4**: 패키지화 및 CI/CD
+1. **Phase 1.1**: workflows/with_mathpix.py 로직을 ExtractionService에 통합
+2. **Phase 1.2**: 실제 ZIP 파일 생성 및 다운로드
+3. **Phase 2**: LangGraph 워크플로우 통합
+4. **Phase 3**: Next.js UI로 마이그레이션 (선택)
 
-자세한 내용은 [NEXT_STEPS.md](NEXT_STEPS.md) 참고.
+자세한 내용은 [docs/NEXT_STEPS.md](docs/NEXT_STEPS.md) 참고.
 
 ## 🤝 기여
 
@@ -257,7 +256,7 @@ MIT
 
 ---
 
-**현재 진행률**: 명세 100% | 구현 80% | 병렬화 20% | 문서화 90%
+**현재 진행률**: 명세 100% | 웹 앱 Phase 1 완료 | 워크플로우 통합 대기
 
-**마지막 업데이트**: 2025-11-08 (v2.1)
+**마지막 업데이트**: 2025-11-14 (v3.0)
 

@@ -291,26 +291,36 @@ record LangGraphState where
 -- Infrastructure 계층
 -- ============================================================================
 
-||| Job Queue (Redis 기반)
+||| Job Repository (SQLite 기반)
+|||
+||| Phase 1: SQLite (간단, 설치 불필요)
+||| Phase 2: PostgreSQL 또는 Redis 추가 (선택)
 public export
-record JobQueue where
-  constructor MkJobQueue
-  ||| 큐에 작업 추가
-  enqueue : JobId -> ()
-  ||| 큐에서 작업 가져오기
-  dequeue : Maybe JobId
-  ||| 큐 크기
-  size : Nat
+record JobRepository where
+  constructor MkJobRepository
+  ||| 작업 저장
+  save : Job -> ()
+  ||| 작업 조회 (ID로)
+  findById : JobId -> Maybe Job
+  ||| 모든 작업 조회
+  findAll : List Job
+  ||| 작업 삭제
+  delete : JobId -> ()
+  ||| 상태별 조회
+  findByStatus : JobStatus -> List Job
 
-||| Worker Pool (동시 처리)
+||| Background Task Executor
+|||
+||| Phase 1: FastAPI BackgroundTasks (단일 프로세스)
+||| Phase 2: Celery + Redis (선택적)
 public export
-record WorkerPool where
-  constructor MkWorkerPool
-  ||| 워커 수
-  workerCount : Nat
+record TaskExecutor where
+  constructor MkTaskExecutor
+  ||| 비동기 작업 실행
+  execute : (JobId -> String -> UploadRequest -> ()) -> JobId -> ()
   ||| 활성 작업 수
-  activeJobs : Nat
-  ||| 최대 동시 처리 수
+  activeTaskCount : Nat
+  ||| 최대 동시 실행 수
   maxConcurrency : Nat
 
 -- ============================================================================
@@ -348,12 +358,12 @@ data LayerSeparation : Type where
 
 ||| 비동기 처리 보장
 |||
-||| FastAPI는 여러 요청을 동시에 처리할 수 있음
+||| FastAPI BackgroundTasks는 여러 작업을 동시에 처리할 수 있음
 public export
-data ConcurrencySupport : WorkerPool -> Type where
+data ConcurrencySupport : TaskExecutor -> Type where
   MkConcurrency :
-    (pool : WorkerPool) ->
-    ConcurrencySupport pool
+    (executor : TaskExecutor) ->
+    ConcurrencySupport executor
 
 -- ============================================================================
 -- API 엔드포인트 정의
