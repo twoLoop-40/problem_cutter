@@ -15,6 +15,26 @@ from pathlib import Path
 API_BASE_URL = "http://localhost:8000"
 
 
+def check_backend_connection():
+    """백엔드 서버 연결 상태 확인"""
+    try:
+        response = requests.get(f"{API_BASE_URL}/", timeout=2)
+        if response.status_code == 200:
+            st.success("✅ 백엔드 서버 연결됨")
+            return True
+    except requests.exceptions.ConnectionError:
+        st.error("❌ 백엔드 서버에 연결할 수 없습니다")
+        st.warning(f"서버가 실행 중인지 확인하세요: `uv run python -m api.main`")
+        st.info(f"서버 주소: {API_BASE_URL}")
+        return False
+    except requests.exceptions.Timeout:
+        st.warning("⚠️ 백엔드 서버 응답 시간 초과")
+        return False
+    except Exception as e:
+        st.error(f"❌ 연결 오류: {e}")
+        return False
+
+
 def main():
     st.set_page_config(
         page_title="PDF Problem Cutter",
@@ -26,6 +46,9 @@ def main():
     st.title("✂️ PDF Problem Cutter")
     st.markdown("PDF 시험지에서 문제를 자동으로 추출합니다")
     st.caption("Powered by Formal Spec Driven Development (Idris2)")
+
+    # 백엔드 연결 상태 확인
+    check_backend_connection()
 
     # 사이드바: 설정
     with st.sidebar:

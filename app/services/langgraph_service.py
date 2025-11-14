@@ -2,6 +2,11 @@
 LangGraph Agent Service (FastAPI 통합)
 
 기존 agent_extraction_service를 LangGraph로 교체
+
+Version 2.0: 병렬 처리 아키텍처
+- Idris2 명세: Specs/System/LangGraphWorkflow.idr
+- PageLevel 병렬: 페이지별 독립 처리
+- ColumnLevel 병렬: 컬럼별 독립 처리
 """
 
 from pathlib import Path
@@ -9,8 +14,8 @@ from typing import Optional
 
 from app.models import JobStatus
 from app.services.job_service import JobService
-from app.agents.workflow_impl import (
-    create_extraction_workflow,
+from app.agents.parallel_workflow import (
+    create_parallel_extraction_workflow,
     create_initial_state,
     initialize_ocr_registry,
 )
@@ -29,6 +34,8 @@ class LangGraphService:
 
         # OCR 레지스트리 초기화
         initialize_ocr_registry()
+
+        print("[LangGraphService] 초기화 완료 (병렬 처리 모드)")
 
     def execute_extraction(
         self,
@@ -49,18 +56,23 @@ class LangGraphService:
             mathpix_app_id: Mathpix App ID (미사용)
         """
         try:
-            # 워크플로우 생성 (캐시됨)
+            # 병렬 처리 워크플로우 생성 (캐시됨)
             if self.workflow is None:
-                self.workflow = create_extraction_workflow()
+                self.workflow = create_parallel_extraction_workflow()
 
             # 초기 상태 생성
             initial_state = create_initial_state(
                 job_id=job_id,
                 pdf_path=pdf_path,
+                dpi=300,  # TODO: 설정 가능하게
             )
 
-            # 워크플로우 실행 (동기)
+            print(f"[LangGraphService] 병렬 워크플로우 시작: {job_id}")
+
+            # 워크플로우 실행 (동기 - LangGraph 내부에서 asyncio 사용)
             final_state = self.workflow.invoke(initial_state)
+
+            print(f"[LangGraphService] 병렬 워크플로우 완료: {job_id}")
 
             # 결과 처리
             if final_state["current_state"] == "Complete":
